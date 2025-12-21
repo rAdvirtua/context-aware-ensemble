@@ -40,8 +40,8 @@ The model follows a **Mixture of Experts (MoE)** design:
 
 1.  **Clone the Repository:**
     ```bash
-    git clone [https://github.com/yourusername/market-ai-trader.git](https://github.com/yourusername/market-ai-trader.git)
-    cd market-ai-trader
+    git clone [https://github.com/rAdvirtua/context-aware-ensemble.git](https://github.com/rAdvirtua/context-aware-ensemble.git)
+    cd context-aware-ensemble
     ```
 
 2.  **Install Dependencies:**
