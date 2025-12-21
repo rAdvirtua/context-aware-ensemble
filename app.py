@@ -276,10 +276,9 @@ with tab1:
                     curr_z = df['Sent_Z_Score'].iloc[-1]
 
                     st.success("✅ Analysis Complete!")
-
                     st.markdown("---")
-                    col1, col2 = st.columns([1, 2])
                     
+                    col1, col2 = st.columns([1, 2])
                     THRESHOLD = 0.0015 
                     
                     with col1:
@@ -307,38 +306,21 @@ with tab1:
                             st.write(f"The predicted move is too small to justify the risk. Signals are conflicting (e.g., Safe VIX but Weak Sentiment). **Wait for clarity.**")
 
                     st.markdown("---")
-
                     st.subheader("📊 The Data Behind the Decision")
                     
                     m1, m2, m3 = st.columns(3)
                     
                     m1.metric("VIX (Fear Level)", f"{curr_vix:.2f}")
                     with m1.expander("What is VIX?"):
-                        st.write("""
-                        **The 'Fear Gauge' of the market.**
-                        * **Below 20:** Calm (Safe to invest).
-                        * **Above 30:** Panic (Dangerous, usually means a crash).
-                        * *Analogy:* Think of this as the "Storm Level." If it's high, stay inside (Keep Cash).
-                        """)
+                        st.write("The 'Fear Gauge'. Below 20 is calm; Above 30 is panic.")
 
                     m2.metric("Sentiment Z-Score", f"{curr_z:.2f}")
                     with m2.expander("What is Z-Score?"):
-                        st.write("""
-                        **The 'Context' of the News.**
-                        * **0.0:** Normal news day.
-                        * **+2.0:** Extremely Happy (Euphoria).
-                        * **-2.0:** Extremely Sad (Panic).
-                        
-                        **⚠️ The Paywall Problem:**
-                        To calculate a true Z-Score, we need 365 days of historical news sentiment. However, getting access to historical news archives (Bloomberg/Reuters) costs thousands of dollars/month in API fees (Paywalls).
-                        
-                        **💡 Our Solution:**
-                        We use "Implied Sentiment." We look at how the market *acted* in the past (using VIX and Momentum) to reverse-engineer how it likely *felt*. This allows us to build a statistically valid baseline without paying $2,000/month for data.
-                        """)
+                        st.write("Context of news. We use 'Implied Sentiment' derived from VIX/RSI to avoid paying for historical news archives.")
                         
                     m3.metric("AI Confidence", f"{final_sent_score:.2f}")
                     with m3.expander("What is this?"):
-                        st.write("This is the raw score (-1 to 1) calculated by reading the news headlines below.")
+                        st.write("The raw score (-1 to 1) from reading the headlines below.")
 
                     if sentiment_mode == "Auto-Scrape News":
                         st.markdown("### 📰 Headlines AI Read Today")
@@ -350,30 +332,33 @@ with tab2:
     
     st.markdown("""
     ### 1. What is this app?
-    This app uses Artificial Intelligence to answer one simple question: 
-    **"Is it safe to put money in the stock market today?"**
+    This app answers one simple question: **"Is it safe to put money in the stock market today?"**
     
     It doesn't guess randomly. It combines two superpowers:
     1.  **Reading:** It reads live news headlines (Bloomberg, Reuters) to understand the "Vibe."
     2.  **Math:** It looks at charts and Volatility (Fear) to check the facts.
     
-    ### 2. What do the signals mean?
+    ### 2. The Traffic Light System
+    The AI gives you one of three signals based on the conflict between Risk (VIX) and News (Sentiment).
     
-    #### 🟢 BUY / LONG
-    * **Meaning:** The AI thinks the market will go **UP** in the next 24 hours.
-    * **What you should do:** Buy an "S&P 500 ETF".
-    * **Tickers to search:** `VOO`, `SPY`, or `IVV`. These represent the top 500 companies in America.
+    #### 🟢 BUY (Green Light)
+    * **The Setup:** The AI sees a "Clear Road" (Low Fear) AND "Full Gas" (Positive News).
+    * **Action:** Consider entering a position in **SPY** or **VOO**.
     
-    #### 🔴 WAIT / CASH
-    * **Meaning:** The AI thinks the market might **DROP** or is too risky.
-    * **What you should do:** Do nothing. Keep your money in your bank or brokerage account (Cash).
-    * **Why?** In investing, *not losing money* is just as important as making money.
+    #### 🟡 HOLD (Yellow Light) 
+    * **The Setup:** **Conflicting Signals.** The market is safe (Low VIX), but the news is weak or negative. Or the news is great, but the market is too volatile.
+    * **Why?** The AI predicts the price won't move enough to make a profit. It's "Dead Money."
+    * **Action:** **Do Nothing.** If you own it, keep it. If you don't, wait.
+    
+    #### 🔴 SELL / WAIT (Red Light)
+    * **The Setup:** The AI predicts a price **DROP**.
+    * **Action:** Stay in **Cash** (Risk-Off). Protect your capital.
     
     ### 3. The "Weather" Analogy
     Imagine the Stock Market is an Ocean, and you are a Sailor.
     * **VIX (Fear):** This is the **Storm Forecast**. If VIX is high, there is a hurricane. Don't sail!
     * **Sentiment:** This is the **Wind**. If news is positive, the wind is at your back (Good).
-    * **Z-Score:** This checks if the weather is *unusually* weird compared to the last year.
+    * **HOLD Signal:** The wind is blowing East, but the current is pulling West. You won't move much, so drop anchor.
 
     ### 4. The Billion-Dollar Problem (and our free fix)
     Big hedge funds pay millions of dollars for "Bloomberg Terminals" to download 20 years of news archives. This allows them to compare today's news to the past perfectly.
