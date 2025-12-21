@@ -93,30 +93,39 @@ class ContextAwareEnsemble(nn.Module):
         return (weights[:, 0:1] * tech_out) + (weights[:, 1:2] * sent_out)
 
 def get_live_news_sentiment(ticker="SPY"):
-    url = f'https://finviz.com/quote.ashx?t={ticker}'
-    headers = {'User-Agent': 'Mozilla/5.0'}
-    
+    url = f"https://news.google.com/rss/search?q={ticker}+stock+news&hl=en-US&gl=US&ceid=US:en"
+    headers = {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
+        'Accept-Language': 'en-US,en;q=0.9',
+        'Referer': 'https://www.google.com/'
+    }
     try:
-        response = requests.get(url, headers=headers)
-        soup = BeautifulSoup(response.text, 'html.parser')
-        news_table = soup.find(id='news-table')
+        response = requests.get(url, headers=headers, timeout=10)
+        if response.status_code != 200:
+            return 0.0, [f"Blocked by provider (Status: {response.status_code})"]
+
+        soup = BeautifulSoup(response.content, features="xml")
+        items = soup.findAll('item')
         
-        if not news_table: return 0.0, ["No news found."]
+        if not items:
+            return 0.0, ["No news found."]
         
         parsed_news = []
-        for x in news_table.findAll('tr'):
-            text = x.a.get_text() 
-            parsed_news.append(text)
-            if len(parsed_news) >= 15: break 
+        for item in items[:15]:
+            title = item.title.text
+            clean_title = title.split(" - ")[0]
+            parsed_news.append(clean_title)
             
         vader = SentimentIntensityAnalyzer()
         scores = [vader.polarity_scores(h)['compound'] for h in parsed_news]
+        
+        if not scores: return 0.0, ["No scorable news found."]
+        
         avg_score = np.mean(scores)
         return avg_score, parsed_news[:5]
         
     except Exception as e:
-        print(f"Scrape Error: {e}")
-        return 0.0, ["Error fetching news."]
+        return 0.0, [f"Error fetching news: {str(e)}"]
 
 @st.cache_resource
 def load_resources():
@@ -186,8 +195,49 @@ with tab1:
         manual_val = st.sidebar.slider("How is the Market Vibe?", -1.0, 1.0, 0.0, 0.1)
         st.sidebar.info(f"Using Manual Score: {manual_val}")
     else:
-        st.sidebar.info("🕷️ Will scrape Finviz for 'SPY' news.")
+        st.sidebar.info("🕷️ Will scrape Google News for 'SPY'.")
 
+    # --- RETRAINING SECTION ---
+    st.sidebar.markdown("---")
+    st.sidebar.header("🔧 Advanced: Active Learning")
+    if st.sidebar.button("Retrain AI Brain (Fine-Tune)"):
+        model, scaler, config = load_resources()
+        if model is None:
+            st.error("Model missing. Cannot retrain.")
+        else:
+            with st.spinner("🧠 Dreaming & Learning from recent data..."):
+                try:
+                    # Fetch fresh data for training
+                    df, _, _ = run_analysis("Auto-Scrape News (Finviz)")
+                    
+                    # Prepare Batch (Last 60 days)
+                    batch_data = df.iloc[-60:][['Returns', 'VIX', 'Mom_10', 'Sent_Z_Score', 'Panic_Signal']]
+                    scaled_batch = scaler.transform(batch_data)
+                    
+                    xs, ys = [], []
+                    for i in range(len(scaled_batch) - SEQ_LEN):
+                        xs.append(scaled_batch[i:i+SEQ_LEN])
+                        ys.append(scaled_batch[i+SEQ_LEN, 0])
+                        
+                    X_train = torch.FloatTensor(np.array(xs)).to(device)
+                    y_train = torch.FloatTensor(np.array(ys)).unsqueeze(1).to(device)
+                    
+                    optimizer = torch.optim.Adam(model.parameters(), lr=0.0001)
+                    criterion = nn.MSELoss()
+                    
+                    model.train()
+                    for _ in range(5): # Fast fine-tuning
+                        optimizer.zero_grad()
+                        loss = criterion(model(X_train), y_train)
+                        loss.backward()
+                        optimizer.step()
+                        
+                    torch.save(model.state_dict(), MODEL_FILE)
+                    st.sidebar.success(f"✅ Brain Updated! Loss: {loss.item():.4f}")
+                except Exception as e:
+                    st.sidebar.error(f"Retraining Failed: {e}")
+
+    # --- MAIN ANALYSIS BUTTON ---
     if st.button("🚀 Analyze Market Now"):
         current_time = time.time()
         time_since_last = current_time - st.session_state['last_run']
