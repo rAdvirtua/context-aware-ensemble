@@ -6,26 +6,30 @@
 
 ## Overview
 
-Most AI trading models fail because they lack context—they treat a calm market and a crashing market identically.
+Most AI trading models fail because they lack context—they treat a calm market and a crashing market identically. Furthermore, obtaining historical news sentiment usually requires expensive Bloomberg Terminal access.
 
-This project addresses this limitation by implementing a **Context-Aware Ensemble**. It utilizes a **Gating Network** (Mixture of Experts) to dynamically switch strategies based on Market Volatility (VIX). The system integrates:
+This project addresses these limitations by implementing a **Context-Aware Ensemble**. It utilizes a **Gating Network** (Mixture of Experts) to dynamically switch strategies based on Market Volatility (VIX) and introduces a novel **"Implied Sentiment"** engine to reconstruct historical context without paid APIs.
+
+The system integrates:
 
 1.  **Technical Analysis:** A **Temporal Convolutional Network (TCN)** to track price momentum and historical trends.
-2.  **Fundamental Analysis:** A **Transformer + VADER** pipeline that scrapes and analyzes live news headlines for sentiment.
-3.  **Statistical Safety:** A proprietary **Sentiment Z-Score** logic that detects "Black Swan" panic events by comparing current news sentiment against the 1-year rolling average.
+2.  **Fundamental Analysis:** A **Transformer + VADER** pipeline that scrapes and analyzes live news headlines (via Google News RSS).
+3.  **Statistical Safety:** A proprietary **Sentiment Z-Score** logic that detects "Black Swan" panic events by comparing current news sentiment against a market-implied historical baseline.
 
 The result is a streamlined dashboard for retail investors that outputs clear **BUY** (Long/Safe) or **WAIT** (Cash/Defensive) signals.
 
 ## Key Features
 
 * **Hybrid Architecture:** Merges a TCN (Time-Series) with a Transformer (NLP) via a learnable Gating Network.
-* **Live News Scraping:** Automatically scrapes Finviz for real-time Bloomberg and Reuters headlines without requiring API keys.
+* **Resilient News Pipeline:** Uses **Google News RSS** to fetch real-time headlines, bypassing the anti-bot blocking often found on standard financial sites like Finviz.
+* **Implied Sentiment Engine:** Solves the "Paywall Problem" by reverse-engineering historical sentiment from VIX and RSI data. This creates a statistically valid Z-Score baseline without needing 20 years of paid news archives.
+* **Active Learning (Retraining):** Includes a "Retrain AI" module that allows the model to fine-tune itself on the most recent 60 days of market data directly from the dashboard.
 * **Volatility-Gated Logic:** The neural network learns to weigh technical factors during calm markets and sentiment factors during high-volatility events.
-* **The "Z-Score" Circuit Breaker:** Hard-coded quantitative logic that forces a defensive signal if sentiment drops more than 1.5 standard deviations below the yearly mean.
 * **Anti-Spam Protection:** Built-in cooldown timers to prevent IP bans during the web scraping process.
-* **Beginner-Oriented UI:** A clean Streamlit interface that translates complex model inference into actionable signals.
 
 ## Architecture
+
+
 
 The model follows a **Mixture of Experts (MoE)** design:
 
@@ -55,17 +59,17 @@ The model follows a **Mixture of Experts (MoE)** design:
     ```
 
 4.  **Usage:**
-    * Launch the web interface.
-    * Click "Analyze Market Now" to trigger the live data fetch and inference pipeline.
-    * View the generated signal and underlying metrics.
+    * **Live Analysis:** Click "Analyze Market Now" to trigger the live data fetch and inference pipeline.
+    * **Retraining:** Open the sidebar and click "Retrain AI Brain" to fine-tune the model on the latest market data.
 
 ## File Structure
 
-* `app.py`: The main Streamlit application containing the frontend and inference logic.
+* `app.py`: The main Streamlit application containing the frontend, inference logic, and retraining module.
+* `sp500_screener.py`: A standalone script to scan the Top 50 S&P 500 stocks for individual opportunities.
 * `hybrid_model.pth`: Pre-trained PyTorch model weights.
 * `scaler.pkl`: Scikit-learn scaler for data normalization.
 * `model_config.json`: Hyperparameter configuration file.
 
 ## Disclaimer
 
-**This is a research project, not financial advice.** The model outputs are probabilistic predictions based on historical data. Algorithmic trading involves significant risk of capital loss. Always perform your own due diligence before investing.
+**This is a research project, not financial advice.** The model outputs are probabilistic predictions based on historical data. Algorithmic trading involves significant risk of capital loss. The "Implied Sentiment" logic is a proxy approximation and may not reflect actual historical news events perfectly. Always perform your own due diligence before investing.
