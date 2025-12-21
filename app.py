@@ -149,6 +149,41 @@ def calculate_implied_sentiment(df):
     implied_sentiment = (rsi_norm + vix_norm) / 2
     return implied_sentiment.fillna(0)
 
+def generate_reasoning(pred_return, vix, z_score, momentum):
+    # Logic Engine to explain the Neural Network's decision
+    reasoning = ""
+    
+    # 1. Market Regime Analysis
+    if vix < 20: regime = "Calm/Bullish"
+    elif vix < 28: regime = "Volatile/Caution"
+    else: regime = "Panic/Bearish"
+    
+    # 2. Momentum Analysis
+    trend = "Positive" if momentum > 0 else "Negative"
+    
+    # 3. Sentiment Context
+    if z_score > 1.0: context = "Euphoric News"
+    elif z_score < -1.5: context = "Fearful News"
+    else: context = "Neutral News"
+
+    # 4. Synthesis
+    if pred_return > 0:
+        if regime == "Calm/Bullish" and trend == "Positive":
+            reasoning = f"**Confluence:** The market is calm (VIX {vix:.0f}) and price momentum is positive. The AI sees a clear path for growth."
+        elif regime == "Panic/Bearish" and z_score > -1.0:
+            reasoning = f"**Contrarian Rebound:** Although volatility is high (VIX {vix:.0f}), sentiment is stabilizing. The AI detects an oversold bounce opportunity."
+        else:
+            reasoning = f"**Technical Strength:** Despite {context.lower()}, strong momentum metrics suggest the uptrend will continue."
+    else:
+        if regime == "Panic/Bearish":
+            reasoning = f"**Risk Off:** Extreme volatility (VIX {vix:.0f}) combined with {context.lower()} signals a potential crash or drawdown."
+        elif trend == "Negative":
+            reasoning = f"**Weak Structure:** Even if news is okay, price momentum is fading. The AI predicts 'Dead Money' or a slow bleed."
+        else:
+            reasoning = "**Conflicting Signals:** Volatility and Sentiment are mismatched. The AI is defaulting to a defensive posture to preserve capital."
+            
+    return reasoning
+
 def run_analysis(sentiment_mode, manual_score=0.0):
     tickers = ['^GSPC', '^VIX', 'DX-Y.NYB', '^TNX']
     data = yf.download(tickers, period="2y", progress=False)
@@ -274,36 +309,26 @@ with tab1:
                     
                     curr_vix = df['VIX'].iloc[-1]
                     curr_z = df['Sent_Z_Score'].iloc[-1]
+                    curr_mom = df['Mom_10'].iloc[-1]
 
                     st.success("✅ Analysis Complete!")
+
                     st.markdown("---")
-                    
                     col1, col2 = st.columns([1, 2])
-                    THRESHOLD = 0.0015 
                     
+                    # LOGIC: Pure Buy vs Wait
                     with col1:
-                        if pred_real > THRESHOLD:
+                        if pred_real > 0:
                             st.markdown("# 🟢 BUY")
-                            st.caption(f"Bullish Signal (+{pred_real*100:.2f}%)")
-                            signal_color = "green"
-                        elif pred_real < -THRESHOLD:
-                            st.markdown("# 🔴 SELL")
-                            st.caption(f"Bearish Signal ({pred_real*100:.2f}%)")
-                            signal_color = "red"
+                            st.caption(f"Bullish Forecast (+{pred_real*100:.2f}%)")
                         else:
-                            st.markdown("# 🟡 HOLD")
-                            st.caption(f"Weak Signal ({pred_real*100:.2f}%)")
-                            signal_color = "yellow"
+                            st.markdown("# 🔴 WAIT")
+                            st.caption(f"Bearish Forecast ({pred_real*100:.2f}%)")
                             
                     with col2:
-                        st.markdown("### **Recommendation:**")
-                        if signal_color == "green":
-                            st.write("**High Conviction.** Market conditions (VIX) and Sentiment are aligning favorably.")
-                        elif signal_color == "red":
-                            st.write("**Risk Off.** The model predicts downside. Cash is a safe position.")
-                        else:
-                            st.write("**Indecisive Market.**")
-                            st.write(f"The predicted move is too small to justify the risk. Signals are conflicting (e.g., Safe VIX but Weak Sentiment). **Wait for clarity.**")
+                        st.markdown("### **AI Logic:**")
+                        reasoning = generate_reasoning(pred_real, curr_vix, curr_z, curr_mom)
+                        st.info(reasoning)
 
                     st.markdown("---")
                     st.subheader("📊 The Data Behind the Decision")
@@ -316,7 +341,7 @@ with tab1:
 
                     m2.metric("Sentiment Z-Score", f"{curr_z:.2f}")
                     with m2.expander("What is Z-Score?"):
-                        st.write("Context of news. We use 'Implied Sentiment' derived from VIX/RSI to avoid paying for historical news archives.")
+                        st.write("Context of news. Derived from Implied Sentiment (VIX/RSI) to reconstruct historical context.")
                         
                     m3.metric("AI Confidence", f"{final_sent_score:.2f}")
                     with m3.expander("What is this?"):
@@ -332,36 +357,36 @@ with tab2:
     
     st.markdown("""
     ### 1. What is this app?
-    This app answers one simple question: **"Is it safe to put money in the stock market today?"**
+    This app uses Artificial Intelligence to answer one simple question: 
+    **"Is it safe to put money in the stock market today?"**
     
     It doesn't guess randomly. It combines two superpowers:
     1.  **Reading:** It reads live news headlines (Bloomberg, Reuters) to understand the "Vibe."
     2.  **Math:** It looks at charts and Volatility (Fear) to check the facts.
     
-    ### 2. The Traffic Light System
-    The AI gives you one of three signals based on the conflict between Risk (VIX) and News (Sentiment).
+    ### 2. The Decision Logic
+    The AI gives you one of two signals based on the conflict between Risk (VIX) and News (Sentiment).
     
-    #### 🟢 BUY (Green Light)
-    * **The Setup:** The AI sees a "Clear Road" (Low Fear) AND "Full Gas" (Positive News).
+    #### 🟢 BUY (Green Light) 
+
+[Image of green traffic light]
+
+    * **The Setup:** The AI sees a path for profit. This usually means Low Fear (VIX) + Positive Momentum.
     * **Action:** Consider entering a position in **SPY** or **VOO**.
     
-    #### 🟡 HOLD (Yellow Light) 
-    * **The Setup:** **Conflicting Signals.** The market is safe (Low VIX), but the news is weak or negative. Or the news is great, but the market is too volatile.
-    * **Why?** The AI predicts the price won't move enough to make a profit. It's "Dead Money."
-    * **Action:** **Do Nothing.** If you own it, keep it. If you don't, wait.
-    
-    #### 🔴 SELL / WAIT (Red Light)
-    * **The Setup:** The AI predicts a price **DROP**.
+    #### 🔴 WAIT / SELL (Red Light) 
+    * **The Setup:** The AI predicts a drop or "Dead Money" (Sideways movement).
+    * **Why?** Even if news is good, if the market is too fearful (High VIX), stocks won't go up.
     * **Action:** Stay in **Cash** (Risk-Off). Protect your capital.
     
-    ### 3. The "Weather" Analogy
+    ### 3. The "Weather" Analogy 
     Imagine the Stock Market is an Ocean, and you are a Sailor.
     * **VIX (Fear):** This is the **Storm Forecast**. If VIX is high, there is a hurricane. Don't sail!
     * **Sentiment:** This is the **Wind**. If news is positive, the wind is at your back (Good).
-    * **HOLD Signal:** The wind is blowing East, but the current is pulling West. You won't move much, so drop anchor.
+    * **Decision:** Even if the wind is good, we don't sail into a hurricane.
 
     ### 4. The Billion-Dollar Problem (and our free fix)
-    Big hedge funds pay millions of dollars for "Bloomberg Terminals" to download 20 years of news archives. This allows them to compare today's news to the past perfectly.
+    Big hedge funds pay millions of dollars for "Bloomberg Terminals" to download 20 years of news archives. 
     
     **We are limited by Paywalls.** We cannot scrape news from 6 months ago for free.
     
