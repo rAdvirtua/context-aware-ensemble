@@ -27,7 +27,8 @@ MODEL_FILE = "hybrid_model.pth"
 SCALER_FILE = "scaler.pkl"
 CONFIG_FILE = "model_config.json"
 SEQ_LEN = 30
-COOLDOWN_SECONDS = 60
+COOLDOWN_SECONDS = 60 # For Analysis
+RETRAIN_COOLDOWN_SECONDS = 3600 # 1 Hour for Retraining (Heavy Task)
 
 class Chomp1d(nn.Module):
     def __init__(self, chomp_size):
@@ -150,23 +151,18 @@ def calculate_implied_sentiment(df):
     return implied_sentiment.fillna(0)
 
 def generate_reasoning(pred_return, vix, z_score, momentum):
-    # Logic Engine to explain the Neural Network's decision
     reasoning = ""
     
-    # 1. Market Regime Analysis
     if vix < 20: regime = "Calm/Bullish"
     elif vix < 28: regime = "Volatile/Caution"
     else: regime = "Panic/Bearish"
     
-    # 2. Momentum Analysis
     trend = "Positive" if momentum > 0 else "Negative"
     
-    # 3. Sentiment Context
     if z_score > 1.0: context = "Euphoric News"
     elif z_score < -1.5: context = "Fearful News"
     else: context = "Neutral News"
 
-    # 4. Synthesis
     if pred_return > 0:
         if regime == "Calm/Bullish" and trend == "Positive":
             reasoning = f"**Confluence:** The market is calm (VIX {vix:.0f}) and price momentum is positive. The AI sees a clear path for growth."
@@ -227,6 +223,7 @@ def run_analysis(sentiment_mode, manual_score=0.0):
 st.set_page_config(page_title="AI Market Predictor", layout="centered")
 
 if 'last_run' not in st.session_state: st.session_state['last_run'] = 0
+if 'last_retrain' not in st.session_state: st.session_state['last_retrain'] = 0
 
 tab1, tab2 = st.tabs(["🚀 AI Prediction Dashboard", "📚 Beginner's Guide"])
 
@@ -246,39 +243,48 @@ with tab1:
 
     st.sidebar.markdown("---")
     st.sidebar.header("🔧 Active Learning")
+    
     if st.sidebar.button("Retrain AI Brain"):
-        model, scaler, config = load_resources()
-        if model is None:
-            st.error("Model missing. Cannot retrain.")
+        curr_ts = time.time()
+        # --- SPAM PROTECTION CHECK ---
+        time_since_retrain = curr_ts - st.session_state['last_retrain']
+        if time_since_retrain < RETRAIN_COOLDOWN_SECONDS:
+            mins_left = int((RETRAIN_COOLDOWN_SECONDS - time_since_retrain) / 60)
+            st.sidebar.error(f"⚠️ Cooldown Active! Wait {mins_left} min.")
         else:
-            with st.spinner("🧠 Fine-tuning on recent data..."):
-                try:
-                    df, _, _ = run_analysis("Auto-Scrape News")
-                    batch_data = df.iloc[-60:][['Returns', 'VIX', 'Mom_10', 'Sent_Z_Score', 'Panic_Signal']]
-                    scaled_batch = scaler.transform(batch_data)
-                    
-                    xs, ys = [], []
-                    for i in range(len(scaled_batch) - SEQ_LEN):
-                        xs.append(scaled_batch[i:i+SEQ_LEN])
-                        ys.append(scaled_batch[i+SEQ_LEN, 0])
+            st.session_state['last_retrain'] = curr_ts
+            model, scaler, config = load_resources()
+            if model is None:
+                st.error("Model missing. Cannot retrain.")
+            else:
+                with st.spinner("🧠 Fine-tuning on recent data..."):
+                    try:
+                        df, _, _ = run_analysis("Auto-Scrape News")
+                        batch_data = df.iloc[-60:][['Returns', 'VIX', 'Mom_10', 'Sent_Z_Score', 'Panic_Signal']]
+                        scaled_batch = scaler.transform(batch_data)
                         
-                    X_train = torch.FloatTensor(np.array(xs)).to(device)
-                    y_train = torch.FloatTensor(np.array(ys)).unsqueeze(1).to(device)
-                    
-                    optimizer = torch.optim.Adam(model.parameters(), lr=0.0001)
-                    criterion = nn.MSELoss()
-                    
-                    model.train()
-                    for _ in range(5):
-                        optimizer.zero_grad()
-                        loss = criterion(model(X_train), y_train)
-                        loss.backward()
-                        optimizer.step()
+                        xs, ys = [], []
+                        for i in range(len(scaled_batch) - SEQ_LEN):
+                            xs.append(scaled_batch[i:i+SEQ_LEN])
+                            ys.append(scaled_batch[i+SEQ_LEN, 0])
+                            
+                        X_train = torch.FloatTensor(np.array(xs)).to(device)
+                        y_train = torch.FloatTensor(np.array(ys)).unsqueeze(1).to(device)
                         
-                    torch.save(model.state_dict(), MODEL_FILE)
-                    st.sidebar.success(f"✅ Brain Updated! Loss: {loss.item():.4f}")
-                except Exception as e:
-                    st.sidebar.error(f"Retraining Failed: {e}")
+                        optimizer = torch.optim.Adam(model.parameters(), lr=0.0001)
+                        criterion = nn.MSELoss()
+                        
+                        model.train()
+                        for _ in range(5):
+                            optimizer.zero_grad()
+                            loss = criterion(model(X_train), y_train)
+                            loss.backward()
+                            optimizer.step()
+                            
+                        torch.save(model.state_dict(), MODEL_FILE)
+                        st.sidebar.success(f"✅ Brain Updated! Loss: {loss.item():.4f}")
+                    except Exception as e:
+                        st.sidebar.error(f"Retraining Failed: {e}")
 
     if st.button("🚀 Analyze Market Now"):
         current_time = time.time()
@@ -316,7 +322,6 @@ with tab1:
                     st.markdown("---")
                     col1, col2 = st.columns([1, 2])
                     
-                    # LOGIC: Pure Buy vs Wait
                     with col1:
                         if pred_real > 0:
                             st.markdown("# 🟢 BUY")
@@ -376,7 +381,7 @@ with tab2:
     * **Why?** Even if news is good, if the market is too fearful (High VIX), stocks won't go up.
     * **Action:** Stay in **Cash** (Risk-Off). Protect your capital.
     
-    ### 3. The "Weather" Analogy
+    ### 3. The "Weather" Analogy 
     Imagine the Stock Market is an Ocean, and you are a Sailor.
     * **VIX (Fear):** This is the **Storm Forecast**. If VIX is high, there is a hurricane. Don't sail!
     * **Sentiment:** This is the **Wind**. If news is positive, the wind is at your back (Good).
