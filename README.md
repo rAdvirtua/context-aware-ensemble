@@ -65,7 +65,6 @@ The model follows a **Mixture of Experts (MoE)** design:
 * `hybrid_model.pth`: Pre-trained PyTorch model weights.
 * `scaler.pkl`: Scikit-learn scaler for data normalization.
 * `model_config.json`: Hyperparameter configuration file.
-* `sp500_screener.py`: (Optional) Utility script to scan individual S&P 500 constituents.
 
 ## Disclaimer
 
