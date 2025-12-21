@@ -367,19 +367,16 @@ with tab2:
     ### 2. The Decision Logic
     The AI gives you one of two signals based on the conflict between Risk (VIX) and News (Sentiment).
     
-    #### 🟢 BUY (Green Light) 
-
-[Image of green traffic light]
-
+    #### 🟢 BUY (Green Light)
     * **The Setup:** The AI sees a path for profit. This usually means Low Fear (VIX) + Positive Momentum.
     * **Action:** Consider entering a position in **SPY** or **VOO**.
     
-    #### 🔴 WAIT / SELL (Red Light) 
+    #### 🔴 WAIT / SELL (Red Light)
     * **The Setup:** The AI predicts a drop or "Dead Money" (Sideways movement).
     * **Why?** Even if news is good, if the market is too fearful (High VIX), stocks won't go up.
     * **Action:** Stay in **Cash** (Risk-Off). Protect your capital.
     
-    ### 3. The "Weather" Analogy 
+    ### 3. The "Weather" Analogy
     Imagine the Stock Market is an Ocean, and you are a Sailor.
     * **VIX (Fear):** This is the **Storm Forecast**. If VIX is high, there is a hurricane. Don't sail!
     * **Sentiment:** This is the **Wind**. If news is positive, the wind is at your back (Good).
