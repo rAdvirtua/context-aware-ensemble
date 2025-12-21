@@ -107,8 +107,7 @@ def get_live_news_sentiment(ticker="SPY"):
         soup = BeautifulSoup(response.content, features="xml")
         items = soup.findAll('item')
         
-        if not items:
-            return 0.0, ["No news found."]
+        if not items: return 0.0, ["No news found."]
         
         parsed_news = []
         for item in items[:15]:
@@ -137,6 +136,19 @@ def load_resources():
     with open(SCALER_FILE, 'rb') as f: scaler = pickle.load(f)
     return model, scaler, config
 
+def calculate_implied_sentiment(df):
+    delta = df['SP500'].diff()
+    gain = (delta.where(delta > 0, 0)).rolling(window=14).mean()
+    loss = (-delta.where(delta < 0, 0)).rolling(window=14).mean()
+    rs = gain / loss
+    rsi = 100 - (100 / (1 + rs))
+    rsi_norm = (rsi - 50) / 50
+    vix_clamped = df['VIX'].clip(10, 60)
+    vix_inv = (60 - vix_clamped) / 50
+    vix_norm = (vix_inv * 2) - 1
+    implied_sentiment = (rsi_norm + vix_norm) / 2
+    return implied_sentiment.fillna(0)
+
 def run_analysis(sentiment_mode, manual_score=0.0):
     tickers = ['^GSPC', '^VIX', 'DX-Y.NYB', '^TNX']
     data = yf.download(tickers, period="2y", progress=False)
@@ -155,13 +167,13 @@ def run_analysis(sentiment_mode, manual_score=0.0):
     
     headlines = []
     
-    if sentiment_mode == "Auto-Scrape News (Finviz)":
+    if sentiment_mode == "Auto-Scrape News":
         live_sentiment, headlines = get_live_news_sentiment("SPY")
     else:
         live_sentiment = manual_score
         headlines = ["User Manual Input override active."]
     
-    df['Sentiment_Score'] = np.random.normal(0, 0.2, size=len(df)) 
+    df['Sentiment_Score'] = calculate_implied_sentiment(df)
     df.iloc[-1, df.columns.get_loc('Sentiment_Score')] = live_sentiment
     
     df['Signal_Smooth'] = df['Sentiment_Score'].ewm(span=14, adjust=False).mean()
@@ -188,7 +200,7 @@ with tab1:
     st.markdown("This tool tells you if it's safe to invest in the **S&P 500 (`^GSPC`)** today.")
 
     st.sidebar.header("⚙️ Settings")
-    sentiment_mode = st.sidebar.radio("Sentiment Source:", ["Auto-Scrape News (Finviz)", "Manual Input Slider"])
+    sentiment_mode = st.sidebar.radio("Sentiment Source:", ["Auto-Scrape News", "Manual Input Slider"])
     
     manual_val = 0.0
     if sentiment_mode == "Manual Input Slider":
@@ -197,20 +209,16 @@ with tab1:
     else:
         st.sidebar.info("🕷️ Will scrape Google News for 'SPY'.")
 
-    # --- RETRAINING SECTION ---
     st.sidebar.markdown("---")
-    st.sidebar.header("🔧 Advanced: Active Learning")
-    if st.sidebar.button("Retrain AI Brain (Fine-Tune)"):
+    st.sidebar.header("🔧 Active Learning")
+    if st.sidebar.button("Retrain AI Brain"):
         model, scaler, config = load_resources()
         if model is None:
             st.error("Model missing. Cannot retrain.")
         else:
-            with st.spinner("🧠 Dreaming & Learning from recent data..."):
+            with st.spinner("🧠 Fine-tuning on recent data..."):
                 try:
-                    # Fetch fresh data for training
-                    df, _, _ = run_analysis("Auto-Scrape News (Finviz)")
-                    
-                    # Prepare Batch (Last 60 days)
+                    df, _, _ = run_analysis("Auto-Scrape News")
                     batch_data = df.iloc[-60:][['Returns', 'VIX', 'Mom_10', 'Sent_Z_Score', 'Panic_Signal']]
                     scaled_batch = scaler.transform(batch_data)
                     
@@ -226,7 +234,7 @@ with tab1:
                     criterion = nn.MSELoss()
                     
                     model.train()
-                    for _ in range(5): # Fast fine-tuning
+                    for _ in range(5):
                         optimizer.zero_grad()
                         loss = criterion(model(X_train), y_train)
                         loss.backward()
@@ -237,7 +245,6 @@ with tab1:
                 except Exception as e:
                     st.sidebar.error(f"Retraining Failed: {e}")
 
-    # --- MAIN ANALYSIS BUTTON ---
     if st.button("🚀 Analyze Market Now"):
         current_time = time.time()
         time_since_last = current_time - st.session_state['last_run']
@@ -310,14 +317,19 @@ with tab1:
                         * **0.0:** Normal news day.
                         * **+2.0:** Extremely Happy (Euphoria).
                         * **-2.0:** Extremely Sad (Panic).
-                        * *Note:* The AI compares today's news to the last 365 days to see if it's *unusually* good or bad.
+                        
+                        **⚠️ The Paywall Problem:**
+                        To calculate a true Z-Score, we need 365 days of historical news sentiment. However, getting access to historical news archives (Bloomberg/Reuters) costs thousands of dollars/month in API fees (Paywalls).
+                        
+                        **💡 Our Solution:**
+                        We use "Implied Sentiment." We look at how the market *acted* in the past (using VIX and Momentum) to reverse-engineer how it likely *felt*. This allows us to build a statistically valid baseline without paying $2,000/month for data.
                         """)
                         
                     m3.metric("AI Confidence", f"{final_sent_score:.2f}")
                     with m3.expander("What is this?"):
                         st.write("This is the raw score (-1 to 1) calculated by reading the news headlines below.")
 
-                    if sentiment_mode == "Auto-Scrape News (Finviz)":
+                    if sentiment_mode == "Auto-Scrape News":
                         st.markdown("### 📰 Headlines AI Read Today")
                         for h in headlines:
                             st.text(f"• {h}")
@@ -351,4 +363,28 @@ with tab2:
     * **VIX (Fear):** This is the **Storm Forecast**. If VIX is high, there is a hurricane. Don't sail!
     * **Sentiment:** This is the **Wind**. If news is positive, the wind is at your back (Good).
     * **Z-Score:** This checks if the weather is *unusually* weird compared to the last year.
+
+    ### 4. The Billion-Dollar Problem (and our free fix)
+    Big hedge funds pay millions of dollars for "Bloomberg Terminals" to download 20 years of news archives. This allows them to compare today's news to the past perfectly.
+    
+    **We are limited by Paywalls.** We cannot scrape news from 6 months ago for free.
+    
+    **Our Solution: "Implied Sentiment"**
+    Instead of paying for old news, we look at **Market Behavior**.
+    * If the market was crashing in the past, we assume the news was *Bad*.
+    * If the market was soaring, we assume the news was *Good*.
+    
+    We use this logic to reconstruct a "Simulated History" of sentiment. This allows our AI to have a mathematical baseline (Z-Score) without needing a corporate budget!
     """)
+
+# --- DISCLAIMER FOOTER ---
+st.markdown("---")
+st.markdown("""
+### ⚖️ Disclaimer: Not Financial Advice
+**The content provided by this application is for educational and informational purposes only.** It does not constitute financial, investment, or trading advice. The 'AI' signals displayed here are generated based on historical data and probabilistic models, which can and do fail. 
+
+* **You are solely responsible for your own investment decisions.**
+* The creator of this project accepts **no liability** for any financial losses or damages incurred resulting from the use of this tool.
+* Always consult with a qualified financial advisor before making investment decisions.
+* Trading stocks and derivatives involves **high risk** and you can lose your entire investment.
+""")
