@@ -280,20 +280,31 @@ with tab1:
                     st.markdown("---")
                     col1, col2 = st.columns([1, 2])
                     
+                    THRESHOLD = 0.0015 
+                    
                     with col1:
-                        if pred_real > 0:
+                        if pred_real > THRESHOLD:
                             st.markdown("# 🟢 BUY")
-                            st.caption("Bullish Signal")
+                            st.caption(f"Bullish Signal (+{pred_real*100:.2f}%)")
+                            signal_color = "green"
+                        elif pred_real < -THRESHOLD:
+                            st.markdown("# 🔴 SELL")
+                            st.caption(f"Bearish Signal ({pred_real*100:.2f}%)")
+                            signal_color = "red"
                         else:
-                            st.markdown("# 🔴 WAIT")
-                            st.caption("Bearish Signal")
+                            st.markdown("# 🟡 HOLD")
+                            st.caption(f"Weak Signal ({pred_real*100:.2f}%)")
+                            signal_color = "yellow"
                             
                     with col2:
                         st.markdown("### **Recommendation:**")
-                        if pred_real > 0:
-                            st.write("Conditions are favorable. Consider buying **SPY** or **VOO** (Index ETFs).")
+                        if signal_color == "green":
+                            st.write("**High Conviction.** Market conditions (VIX) and Sentiment are aligning favorably.")
+                        elif signal_color == "red":
+                            st.write("**Risk Off.** The model predicts downside. Cash is a safe position.")
                         else:
-                            st.write("Market is weak or risky. **Stay in Cash** and preserve your capital.")
+                            st.write("**Indecisive Market.**")
+                            st.write(f"The predicted move is too small to justify the risk. Signals are conflicting (e.g., Safe VIX but Weak Sentiment). **Wait for clarity.**")
 
                     st.markdown("---")
 
@@ -377,7 +388,6 @@ with tab2:
     We use this logic to reconstruct a "Simulated History" of sentiment. This allows our AI to have a mathematical baseline (Z-Score) without needing a corporate budget!
     """)
 
-# --- DISCLAIMER FOOTER ---
 st.markdown("---")
 st.markdown("""
 ### ⚖️ Disclaimer: Not Financial Advice
