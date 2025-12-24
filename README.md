@@ -1,35 +1,32 @@
 # Hybrid Context-Aware AI Trader
 
-**A Risk-First Algorithmic Trading System that combines Deep Learning (TCNs & Transformers) with Quantitative Logic (Z-Score Regime Detection) to predict S&P 500 trends.**
+**A Risk-First Algorithmic Trading System that combines Deep Learning (TCNs & Financial Transformers) with Quantitative Logic (Z-Score Regime Detection) to predict S&P 500 trends.**
 
-![Python](https://img.shields.io/badge/Python-3.9%2B-blue) ![PyTorch](https://img.shields.io/badge/PyTorch-Deep%20Learning-red) ![Streamlit](https://img.shields.io/badge/Streamlit-Dashboard-FF4B4B) ![License](https://img.shields.io/badge/License-MIT-green)
+![Python](https://img.shields.io/badge/Python-3.9%2B-blue) ![PyTorch](https://img.shields.io/badge/PyTorch-Deep%20Learning-red) ![Transformers](https://img.shields.io/badge/HuggingFace-DistilRoBERTa-yellow) ![Streamlit](https://img.shields.io/badge/Streamlit-Dashboard-FF4B4B) ![License](https://img.shields.io/badge/License-MIT-green)
 
 ## Overview
 
 Most AI trading models fail because they lack context—they treat a calm market and a crashing market identically. Furthermore, obtaining historical news sentiment usually requires expensive Bloomberg Terminal access.
 
-This project addresses these limitations by implementing a **Context-Aware Ensemble**. It utilizes a **Gating Network** (Mixture of Experts) to dynamically switch strategies based on Market Volatility (VIX) and introduces a novel **"Implied Sentiment"** engine to reconstruct historical context without paid APIs.
+This project addresses these limitations by implementing a **Context-Aware Ensemble**. It utilizes a **Gating Network** (Mixture of Experts) to dynamically switch strategies based on Market Volatility (VIX) and introduces a novel **"Data Flywheel"** architecture to build a proprietary dataset over time.
 
 The system integrates:
 
 1.  **Technical Analysis:** A **Temporal Convolutional Network (TCN)** to track price momentum and historical trends.
-2.  **Fundamental Analysis:** A **Transformer + VADER** pipeline that scrapes and analyzes live news headlines (via Google News RSS).
-3.  **Statistical Safety:** A proprietary **Sentiment Z-Score** logic that detects "Black Swan" panic events by comparing current news sentiment against a market-implied historical baseline.
+2.  **Fundamental Analysis:** A **DistilRoBERTa Financial Transformer** (NLP) that replaces VADER to understand complex financial nuance (e.g., "Deficit narrowed" is positive).
+3.  **The "Time-Bridge":** A hybrid data engine that stitches together real historical data (2018-2024), implied proxy data (gaps), and live scraped data (today) to create a seamless training timeline.
 
 The result is a streamlined dashboard for retail investors that outputs clear **BUY** (Long/Safe) or **WAIT** (Cash/Defensive) signals.
 
 ## Key Features
 
 * **Hybrid Architecture:** Merges a TCN (Time-Series) with a Transformer (NLP) via a learnable Gating Network.
-* **Resilient News Pipeline:** Uses **Google News RSS** to fetch real-time headlines, bypassing the anti-bot blocking often found on standard financial sites like Finviz.
-* **Implied Sentiment Engine:** Solves the "Paywall Problem" by reverse-engineering historical sentiment from VIX and RSI data. This creates a statistically valid Z-Score baseline without needing 20 years of paid news archives.
+* **Financial BERT Engine:** Uses `mrm8488/distilroberta-finetuned-financial-news-sentiment-analysis` for state-of-the-art financial text classification, offering significantly higher accuracy than dictionary models like VADER.
+* **The Data Moat:** Automatically logs every analysis run (Headlines + Sentiment + Market VIX) into a local `proprietary_dataset.csv`. This creates a unique, high-value dataset that grows every time you use the app, allowing for future fine-tuning.
+* **Implied Sentiment Engine:** Solves the "Paywall Problem" by reverse-engineering historical sentiment from VIX and RSI data for periods where news archives are unavailable.
 * **Active Learning (Retraining):** Includes a "Retrain AI" module that allows the model to fine-tune itself on the most recent 60 days of market data directly from the dashboard.
-* **Volatility-Gated Logic:** The neural network learns to weigh technical factors during calm markets and sentiment factors during high-volatility events.
-* **Anti-Spam Protection:** Built-in cooldown timers to prevent IP bans during the web scraping process.
 
 ## Architecture
-
-
 
 The model follows a **Mixture of Experts (MoE)** design:
 
@@ -59,15 +56,18 @@ The model follows a **Mixture of Experts (MoE)** design:
     ```
 
 4.  **Usage:**
-    * **Live Analysis:** Click "Analyze Market Now" to trigger the live data fetch and inference pipeline.
+    * **Live Analysis:** Click "Analyze Market Now" to trigger the live data fetch (Google News), NLP inference (DistilRoBERTa), and TCN prediction.
+    * **Data Harvesting:** The app will automatically create and append data to `proprietary_dataset.csv`.
     * **Retraining:** Open the sidebar and click "Retrain AI Brain" to fine-tune the model on the latest market data.
 
 ## File Structure
 
-* `app.py`: The main Streamlit application containing the frontend, inference logic, and retraining module.
+* `app.py`: The main Streamlit application containing the frontend, DistilRoBERTa pipeline, and inference logic.
 * `hybrid_model.pth`: Pre-trained PyTorch model weights.
 * `scaler.pkl`: Scikit-learn scaler for data normalization.
 * `model_config.json`: Hyperparameter configuration file.
+* `mcwsi_historical_2024.csv`: The base historical dataset (2018-2024).
+* `proprietary_dataset.csv`: **[AUTO-GENERATED]** The app creates this file to store your unique dataset.
 
 ## Disclaimer
 
