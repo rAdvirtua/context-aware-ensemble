@@ -683,57 +683,13 @@ with tab3:
     """)
     
     st.markdown("---")
-    st.header("5. Model Architecture Deep Dive")
+    st.header("5. Additional Technical Notes")
+    st.markdown("""
+    The model architecture combines multiple neural network components optimized for financial time-series prediction. 
+    Specific implementation details are proprietary and subject to ongoing research and improvements.
     
-    with st.expander("🔬 Temporal Convolutional Network (TCN)"):
-        st.markdown("""
-        **Purpose:** Captures long-range dependencies in time-series data.
-        
-        **How it works:**
-        - Uses dilated convolutions to see far into the past
-        - Dilation factor doubles at each layer (1, 2, 4, 8...)
-        - This allows the model to "see" 30 days back without using 30 layers
-        
-        **Architecture:**
-        - Layer 1: 32 channels, dilation=1
-        - Layer 2: 64 channels, dilation=2
-        - Layer 3: 32 channels, dilation=4
-        - Output: Single prediction value
-        """)
-    
-    with st.expander("🔬 Sentiment Transformer"):
-        st.markdown("""
-        **Purpose:** Analyzes sequential sentiment scores using attention mechanisms.
-        
-        **How it works:**
-        - Projects sentiment into 32-dimensional embedding space
-        - Applies multi-head attention (4 heads)
-        - Learns which past sentiment patterns matter most
-        
-        **Pre-training:**
-        - Uses DistilRoBERTa fine-tuned on financial news
-        - Can distinguish bullish vs bearish language
-        - Trained on thousands of labeled financial headlines
-        """)
-    
-    with st.expander("🔬 Gating Network"):
-        st.markdown("""
-        **Purpose:** Decides how much to trust each expert.
-        
-        **How it works:**
-        - Takes current market conditions as input
-        - Outputs two weights that sum to 1.0
-        - In high VIX: weights sentiment more heavily
-        - In low VIX: weights technicals more heavily
-        
-        **Formula:**
-        """)
-        st.latex(r'''
-        \text{Output} = w_1 \cdot \text{TCN}(x) + w_2 \cdot \text{Transformer}(x)
-        ''')
-        st.latex(r'''
-        w_1 + w_2 = 1.0
-        ''')
+    For questions about the methodology or to report issues, please contact the development team.
+    """)
 
 st.markdown("---")
 st.markdown("### ⚖️ Disclaimer")
