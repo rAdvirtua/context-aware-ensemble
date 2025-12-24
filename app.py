@@ -260,7 +260,7 @@ st.set_page_config(page_title="AI Market Predictor", layout="centered")
 if 'last_run' not in st.session_state: st.session_state['last_run'] = 0
 if 'last_retrain' not in st.session_state: st.session_state['last_retrain'] = 0
 
-tab1, tab2 = st.tabs(["🚀 AI Prediction Dashboard", "📐 Mathematical Architecture"])
+tab1, tab2 = st.tabs(["🚀 AI Prediction Dashboard", "📚 Beginner's Guide"])
 
 with tab1:
     st.title("🤖 Live AI Market Trader")
@@ -394,11 +394,17 @@ with tab1:
                             st.text(f"• {h}")
 
 with tab2:
-    st.title("📐 Mathematical Architecture")
+    st.title("📚 Beginner's Guide (The Secret Math)")
     
     st.markdown("""
-    ### 1. Z-Score Normalization (Contextualizing Sentiment)
-    Raw sentiment scores ($S_t$) from the DistilRoBERTa model are volatile and lack historical context. A score of $0.5$ might be bullish in a bear market but neutral in a bull market. We solve this by normalizing the score against a rolling 1-year window to derive a **Z-Score** ($Z_t$).
+    Welcome! If you are new to AI trading, this page explains **exactly** how the magic works. We use some serious math, but we'll explain it simply.
+    
+    ### 1. The "Vibe Check" (Normalization)
+    **The Problem:** The AI reads the news and gives a score (e.g., +0.5). But is +0.5 "good"?
+    * In a Bull Market, +0.5 is boring.
+    * In a Crash, +0.5 is amazing!
+    
+    **The Solution:** We use a formula called **Z-Score** to compare today's vibe against the average of the last year. It tells us: *"Is today WEIRDLY happy or WEIRDLY sad?"*
     """)
     
     st.latex(r'''
@@ -406,15 +412,13 @@ with tab2:
     ''')
     
     st.markdown("""
-    Where:
-    * $S_t$ is the raw sentiment score at time $t$.
-    * $\mu_{t-365}$ is the rolling mean of sentiment over the last 365 days.
-    * $\sigma_{t-365}$ is the rolling standard deviation.
+    * **Simple translation:** (Today's Score - Average Score) divided by (Standard Deviation). 
+    * If this number is super low (like -2.0), it means **PANIC!** (Black Swan Event).
     
-    **Why this matters:** If $Z_t < -2.0$, we have a statistically significant "Black Swan" fear event (Anomaly Detection).
+    ### 2. The "Time Machine" (Implied Sentiment)
+    **The Problem:** We want to train the AI on history, but we can't afford 10 years of Bloomberg news archives.
     
-    ### 2. The Implied Sentiment Proxy (Missing Data)
-    To train the model over long periods where news data is unavailable (the "Time Bridge"), we infer sentiment ($S_{implied}$) from market observables:
+    **The Solution:** We cheat! We look at how the market *acted* in the past (Volatility) to guess what the news *probably* was. If the market was crashing, we assume the news was bad.
     """)
     
     st.latex(r'''
@@ -422,25 +426,24 @@ with tab2:
     ''')
     
     st.markdown("""
-    This assumes that high volatility ($VIX$) and low momentum ($RSI$) are proxies for negative news flow.
+    * **Simple translation:** We mix Momentum (RSI) and Fear (VIX) to create a "Ghost Sentiment" score. This fills in the gaps so the AI has a continuous memory.
     
-    ### 3. Mixture of Experts (Gating Logic)
-    The final decision $Y$ is a weighted sum of two "Expert" Neural Networks. The weights are determined by a **Gating Network** $G(x)$ that watches the VIX.
+    ### 3. The "Two Brains" (Mixture of Experts)
+    **The Problem:** Sometimes charts work (Trends). Sometimes they fail (Panic).
+    
+    **The Solution:** We built a **Gating Network**. It's like a traffic cop that decides which expert to listen to.
+    * **Brain A (The Chartist):** Looks at lines on a graph.
+    * **Brain B (The News Reader):** Reads headlines.
     """)
     
     st.latex(r'''
-    Y = w_{TCN} \cdot E_{TCN}(x) + w_{NLP} \cdot E_{NLP}(x)
-    ''')
-    
-    st.markdown("The gating weights $w$ are calculated via a Softmax function:")
-    
-    st.latex(r'''
-    w = \text{Softmax}(W_g \cdot \text{VIX} + b_g)
+    \text{Decision} = (w_{tech} \cdot \text{Chartist}) + (w_{news} \cdot \text{NewsReader})
     ''')
     
     st.markdown("""
-    * **Low VIX:** $w_{TCN} \to 1$ (Trust the Technicals).
-    * **High VIX:** $w_{NLP} \to 1$ (Trust the News/Sentiment).
+    The "Traffic Cop" ($w$) uses the **Softmax** function to decide who is in charge:
+    * **If VIX is Low (Calm):** The cop lets the **Chartist** drive.
+    * **If VIX is High (Panic):** The cop shuts down the Chartist and lets the **News Reader** take the wheel.
     """)
 
 st.markdown("---")
