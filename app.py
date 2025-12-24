@@ -31,7 +31,8 @@ SEQ_LEN = 30
 COOLDOWN_SECONDS = 60
 RETRAIN_COOLDOWN_SECONDS = 3600
 
-# --- 1. MODEL ARCHITECTURE (Must Match Training Code Exactly) ---
+# --- 1. THE BRAIN (Neural Network Architecture) ---
+# Kept exact same logic as training to ensure it works
 class Chomp1d(nn.Module):
     def __init__(self, chomp_size):
         super(Chomp1d, self).__init__()
@@ -95,7 +96,7 @@ class ContextAwareEnsemble(nn.Module):
         sent_out = self.sentiment_expert(x[:, :, -1:])
         return (weights[:, 0:1] * tech_out) + (weights[:, 1:2] * sent_out)
 
-# --- 2. HELPER FUNCTIONS ---
+# --- 2. HELPER FUNCTIONS (Data & Logic) ---
 
 @st.cache_resource
 def load_nlp_model():
@@ -131,6 +132,7 @@ def log_data_snapshot(mcwsi, headlines, prediction, vix, momentum):
         writer.writerow([timestamp, mcwsi, vix, momentum, prediction, len(headlines), headlines_json])
 
 def get_live_news_sentiment(ticker="SPY"):
+    # This grabs news for SPY (S&P 500 ETF) so we get market-relevant news, not random noise.
     url = f"https://news.google.com/rss/search?q={ticker}+stock+news&hl=en-US&gl=US&ceid=US:en"
     headers = {
         'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
@@ -166,15 +168,21 @@ def get_live_news_sentiment(ticker="SPY"):
         return 0.0, [f"Error fetching news: {str(e)}"]
 
 def calculate_implied_sentiment(df):
+    # This fills the "Gap" in history when we don't have survey data.
+    # We "imply" sentiment from how the market is behaving.
     delta = df['SP500'].diff()
     gain = (delta.where(delta > 0, 0)).rolling(window=14).mean()
     loss = (-delta.where(delta < 0, 0)).rolling(window=14).mean()
     rs = gain / loss
     rsi = 100 - (100 / (1 + rs))
+    
+    # Normalize RSI (0 to 1) and VIX (inverted, 0 to 1)
     rsi_norm = (rsi - 50) / 50
     vix_clamped = df['VIX'].clip(10, 60)
     vix_inv = (60 - vix_clamped) / 50
     vix_norm = (vix_inv * 2) - 1
+    
+    # Average them
     implied_sentiment = (rsi_norm + vix_norm) / 2
     return implied_sentiment.fillna(0)
 
@@ -184,13 +192,13 @@ def get_hybrid_sentiment(df):
         try:
             real_data = pd.read_csv(HISTORICAL_DATA_FILE, parse_dates=['Date'], index_col='Date')
             real_aligned = real_data.reindex(df.index)
+            # Combine: Use Real data where we have it, Implied where we don't
             hybrid = real_aligned['MCWSI'].combine_first(implied)
             return hybrid
         except Exception:
             return implied
     return implied
 
-# --- 3. CORE ANALYSIS (Updated with Realism Logic) ---
 def run_analysis(sentiment_mode, manual_score=0.0):
     tickers = ['^GSPC', '^VIX', 'DX-Y.NYB', '^TNX']
     data = yf.download(tickers, period="2y", progress=False)
@@ -214,15 +222,11 @@ def run_analysis(sentiment_mode, manual_score=0.0):
         headlines = ["User Manual Input override active."]
         
     df['Sentiment_Score'] = get_hybrid_sentiment(df)
-    # Inject live sentiment into the last row for prediction
     df.iloc[-1, df.columns.get_loc('Sentiment_Score')] = live_sentiment
     
-    # --- 🛠️ REALISM UPDATE: Leak-Proof Z-Score Calculation ---
-    # 1. Smooth the sentiment signal
+    # --- RIGOROUS MATH ---
+    # We calculate Z-Scores using "Yesterday's" data to avoid cheating (Look-Ahead Bias)
     df['Signal_Smooth'] = df['Sentiment_Score'].ewm(span=14, adjust=False).mean()
-    
-    # 2. Calculate Rolling Stats using SHIFT(1) 
-    # This ensures we define "Panic" based on historical baselines, not today's data (No Peeking!)
     df['Rolling_Mean'] = df['Signal_Smooth'].shift(1).rolling(window=365, min_periods=30).mean()
     df['Rolling_Std'] = df['Signal_Smooth'].shift(1).rolling(window=365, min_periods=30).std()
     
@@ -232,116 +236,62 @@ def run_analysis(sentiment_mode, manual_score=0.0):
     df['Sent_Z_Score'] = (df['Signal_Smooth'] - df['Rolling_Mean']) / df['Rolling_Std']
     df['Sent_Z_Score'] = df['Sent_Z_Score'].fillna(0)
     
-    # 3. Panic Signal logic
+    # If sentiment is -1.5 deviations below normal, it's a "Panic"
     df['Panic_Signal'] = np.where(df['Sent_Z_Score'] < -1.5, -1, 1)
     
     return df.dropna(), headlines, live_sentiment
 
-def generate_reasoning(pred_return, vix, z_score, momentum):
-    reasoning = ""
-    # Regime Definition
-    if vix < 20: regime = "Calm/Bullish"
-    elif vix < 28: regime = "Volatile/Caution"
-    else: regime = "Panic/Bearish"
+def generate_simple_reasoning(pred_return, vix, z_score):
+    # Translator: Math -> English
     
-    trend = "Positive" if momentum > 0 else "Negative"
+    # 1. Check the "Vibe" (Regime)
+    if vix < 20: 
+        vibe = "Calm"
+    elif vix < 28: 
+        vibe = "Nervous"
+    else: 
+        vibe = "Panicked"
     
-    if z_score > 1.0: context = "Euphoric News"
-    elif z_score < -1.5: context = "Extreme Fear"
-    else: context = "Neutral News"
-
-    # Optimization Logic: The model is "Always-In"
-    if pred_return > 0:
-        if regime == "Calm/Bullish":
-            reasoning = f"**Green Light:** Low volatility (VIX {vix:.0f}) and positive structure. The AI recommends a Long position to capture trend continuation."
-        elif regime == "Panic/Bearish" and z_score > -1.0:
-            reasoning = f"**Contrarian Buy:** VIX is high ({vix:.0f}), but sentiment is stabilizing. The AI detects an oversold bounce opportunity."
-        else:
-            reasoning = f"**Momentum Play:** Despite {context.lower()}, technicals remain strong. The AI favors staying in the market over paying fees to exit."
+    # 2. Check the News (Z-Score)
+    if z_score < -1.5:
+        news_status = "Very Bad News"
+    elif z_score > 1.0:
+        news_status = "Euphoric/Hyped"
     else:
-        # Prediction is Negative (Short/Sell)
-        if regime == "Panic/Bearish":
-            reasoning = f"**Defensive Short:** Extreme volatility (VIX {vix:.0f}) + {context.lower()}. The AI predicts further downside and recommends Shorting or Cash."
-        elif trend == "Negative":
-            reasoning = f"**Trend Following Short:** Price momentum is fading. The AI predicts a slow bleed and recommends exiting Long positions."
-        else:
-            reasoning = "**Fee Avoidance:** The signal is weak/negative. Backtests show it is more profitable to exit/short here than to hold through the chop."
-            
-    return reasoning
+        news_status = "Normal News"
 
-# --- 4. STREAMLIT UI ---
-st.set_page_config(page_title="AI Market Predictor", layout="centered")
+    # 3. Final Verdict
+    if pred_return > 0:
+        if vibe == "Panicked":
+            return f"**Rebound Opportunity:** Everyone else is panicked ({vibe} Market), but the AI thinks the selling is overdone. It sees a chance to buy low."
+        else:
+            return f"**All Systems Go:** The market is {vibe} and the news is {news_status}. The AI predicts prices will go UP."
+    else:
+        if vibe == "Panicked":
+            return f"**Too Risky:** The market is {vibe} and news is {news_status}. The AI recommends sitting in cash until things settle down."
+        else:
+            return f"**Weakness Detected:** Even though the market seems {vibe}, the AI detects underlying weakness. It thinks it's safer to wait."
+
+# --- 3. STREAMLIT UI ---
+st.set_page_config(page_title="Beginner AI Trader", layout="centered")
 
 if 'last_run' not in st.session_state: st.session_state['last_run'] = 0
 if 'last_retrain' not in st.session_state: st.session_state['last_retrain'] = 0
 
-tab1, tab2 = st.tabs(["🚀 AI Prediction Dashboard", "📚 Realism Guide"])
+# Tabs for separate sections
+tab1, tab2, tab3 = st.tabs(["🚀 Predictor", "🧠 How It Works (The Math)", "🔧 Settings"])
 
+# --- TAB 1: THE SIMPLE PREDICTOR ---
 with tab1:
-    st.title("🤖 Live AI Market Trader")
-    st.markdown("Context-Aware Ensemble (TCN + Transformer) | **Net-of-Fees Optimized**")
-
-    st.sidebar.header("⚙️ Settings")
-    sentiment_mode = st.sidebar.radio("Sentiment Source:", ["Auto-Scrape News", "Manual Input Slider"])
-    
-    manual_val = 0.0
-    if sentiment_mode == "Manual Input Slider":
-        manual_val = st.sidebar.slider("How is the Market Vibe?", -1.0, 1.0, 0.0, 0.1)
-        st.sidebar.info(f"Using Manual Score: {manual_val}")
-    else:
-        st.sidebar.info("🕷️ Will scrape Google News for 'SPY'.")
-
-    st.sidebar.markdown("---")
-    st.sidebar.header("🔧 Active Learning")
-    
-    if st.sidebar.button("Retrain AI Brain"):
-        curr_ts = time.time()
-        time_since_retrain = curr_ts - st.session_state['last_retrain']
-        if time_since_retrain < RETRAIN_COOLDOWN_SECONDS:
-            mins_left = int((RETRAIN_COOLDOWN_SECONDS - time_since_retrain) / 60)
-            st.sidebar.error(f"⚠️ Cooldown Active! Wait {mins_left} min.")
-        else:
-            st.session_state['last_retrain'] = curr_ts
-            model, scaler, config = load_resources()
-            if model is None:
-                st.error("Model missing. Cannot retrain.")
-            else:
-                with st.spinner("🧠 Fine-tuning on recent data..."):
-                    try:
-                        df, _, _ = run_analysis("Auto-Scrape News")
-                        batch_data = df.iloc[-60:][['Returns', 'VIX', 'Mom_10', 'Sent_Z_Score', 'Panic_Signal']]
-                        scaled_batch = scaler.transform(batch_data)
-                        
-                        xs, ys = [], []
-                        for i in range(len(scaled_batch) - SEQ_LEN):
-                            xs.append(scaled_batch[i:i+SEQ_LEN])
-                            ys.append(scaled_batch[i+SEQ_LEN, 0])
-                            
-                        X_train = torch.FloatTensor(np.array(xs)).to(device)
-                        y_train = torch.FloatTensor(np.array(ys)).unsqueeze(1).to(device)
-                        
-                        optimizer = torch.optim.Adam(model.parameters(), lr=0.0001)
-                        criterion = nn.MSELoss()
-                        
-                        model.train()
-                        for _ in range(5):
-                            optimizer.zero_grad()
-                            loss = criterion(model(X_train), y_train)
-                            loss.backward()
-                            optimizer.step()
-                            
-                        torch.save(model.state_dict(), MODEL_FILE)
-                        st.sidebar.success(f"✅ Brain Updated! Loss: {loss.item():.4f}")
-                    except Exception as e:
-                        st.sidebar.error(f"Retraining Failed: {e}")
+    st.title("🤖 Is the Market Safe?")
+    st.markdown("Use Artificial Intelligence to check if it's a good day to buy the S&P 500.")
 
     if st.button("🚀 Analyze Market Now"):
         current_time = time.time()
         time_since_last = current_time - st.session_state['last_run']
         
         if time_since_last < COOLDOWN_SECONDS:
-            wait_time = int(COOLDOWN_SECONDS - time_since_last)
-            st.error(f"⚠️ **Please Wait:** Anti-Spam Cooldown active ({wait_time}s remaining).")
+            st.warning(f"Please wait {int(COOLDOWN_SECONDS - time_since_last)} seconds before clicking again.")
         else:
             st.session_state['last_run'] = current_time
             
@@ -349,16 +299,20 @@ with tab1:
             if model is None:
                 st.error("⚠️ Model files missing! Please upload hybrid_model.pth.")
             else:
-                with st.spinner("🕷️ Reading News & Analyzing Charts..."):
-                    df, headlines, final_sent_score = run_analysis(sentiment_mode, manual_val)
+                with st.spinner("🕷️ AI is reading the news..."):
+                    # Use 'Auto-Scrape' by default for the button
+                    df, headlines, final_sent_score = run_analysis("Auto-Scrape News")
                     
+                    # Prepare Data
                     input_slice = df.iloc[-SEQ_LEN:][['Returns', 'VIX', 'Mom_10', 'Sent_Z_Score', 'Panic_Signal']]
                     input_scaled = scaler.transform(input_slice)
                     input_tensor = torch.FloatTensor(input_scaled).unsqueeze(0).to(device)
                     
+                    # Get Prediction
                     model.eval()
                     with torch.no_grad(): pred_raw = model(input_tensor).item()
                     
+                    # Unscale
                     mean, std = scaler.mean_[0], scaler.scale_[0]
                     pred_real = (pred_raw * std) + mean
                     
@@ -368,87 +322,134 @@ with tab1:
                     
                     log_data_snapshot(final_sent_score, headlines, pred_real, curr_vix, curr_mom)
 
-                    st.success("✅ Analysis Complete & Data Logged!")
-
+                    # --- RESULT DISPLAY ---
                     st.markdown("---")
-                    col1, col2 = st.columns([1, 2])
                     
-                    # --- 🛠️ OPTIMIZATION UPDATE: Threshold 0.0 (Always-In) ---
-                    # Backtests showed that "Waiting" (Neutral) loses money to fees.
-                    with col1:
-                        if pred_real > 0:
-                            st.markdown("# 🟢 BULLISH")
-                            st.caption(f"Strategy: **LONG** (+{pred_real*100:.2f}%)")
-                        else:
-                            st.markdown("# 🔴 BEARISH")
-                            st.caption(f"Strategy: **SHORT/SELL** ({pred_real*100:.2f}%)")
-                            
-                    with col2:
-                        st.markdown("### **AI Reasoning:**")
-                        reasoning = generate_reasoning(pred_real, curr_vix, curr_z, curr_mom)
-                        st.info(reasoning)
-
-                    st.markdown("---")
-                    st.subheader("📊 The Data Behind the Decision")
+                    # Simple "Traffic Light" Logic
+                    if pred_real > 0:
+                        st.success("# ✅ MARKET LOOKS GOOD")
+                        st.markdown(f"**The AI thinks prices will rise.** (Projected Gain: +{pred_real*100:.2f}%)")
+                    else:
+                        st.error("# 🛑 BETTER TO WAIT")
+                        st.markdown(f"**The AI thinks prices might fall.** (Projected Loss: {pred_real*100:.2f}%)")
                     
-                    m1, m2, m3 = st.columns(3)
-                    
-                    m1.metric("VIX (Fear Level)", f"{curr_vix:.2f}")
-                    with m1.expander("Why VIX?"):
-                        st.write("The 'Fear Gauge'. Used by the Gating Network to weigh Technicals vs. Sentiment.")
+                    st.info(generate_simple_reasoning(pred_real, curr_vix, curr_z))
 
-                    m2.metric("Leak-Proof Z-Score", f"{curr_z:.2f}")
-                    with m2.expander("Why Leak-Proof?"):
-                        st.write("Calculated using strictly YESTERDAY'S moving average to prevent look-ahead bias.")
-                        
-                    m3.metric("AI Confidence", f"{final_sent_score:.2f}")
-
-                    if sentiment_mode == "Auto-Scrape News":
-                        st.markdown("### 📰 Headlines Analyzed")
+                    # --- HEADLINES ---
+                    with st.expander("📰 See the News the AI Read"):
                         for h in headlines:
-                            st.text(f"• {h}")
+                            st.write(f"- {h}")
 
+# --- TAB 2: EDUCATIONAL (THE MATH & TECH) ---
 with tab2:
-    st.title("📚 Realism & Methodology")
-    
-    st.header("1. The 'Net-of-Fees' Philosophy")
+    st.header("How the Magic Happens 🪄")
     st.markdown("""
-    Most AI trading bots look like money printers because they assume trading is free.
-    * **This System is Different.**
-    * We audited the model assuming a **0.10% cost per trade** (Spread + Slippage + Commission).
-    * **The Result:** We removed the "Neutral Zone". Our research showed that "Waiting for perfect confidence" actually lost money due to churn (constantly entering/exiting). 
-    * **Strategy:** The model is now **"Always-In"** (Long or Short) unless extreme Panic overrides the signal. Time in market > Timing.
+    This isn't just a random guess. The AI uses advanced mathematics and two "brains" to make a decision.
+    Here is the breakdown of the technology.
     """)
     
-    st.markdown("---")
+    st.subheader("1. The Two Experts")
+    col1, col2 = st.columns(2)
+    with col1:
+        st.markdown("**🧠 Expert A: The Pattern Spotter (TCN)**")
+        st.caption("Temporal Convolutional Network")
+        st.write("This part of the brain looks at charts. It ignores news and focuses purely on math: *'If the price did X yesterday, it usually does Y today.'*")
+    with col2:
+        st.markdown("**🧠 Expert B: The Reader (Transformer)**")
+        st.caption("Sentiment Analysis Engine")
+        st.write("This part reads the news. It uses a model called 'DistilRoBERTa' to understand if headlines are fearful or happy.")
+
+    st.subheader("2. The Math: Filling the Gaps")
+    st.markdown("We need 5 years of history to train the AI, but news data is hard to find for the past. So, we use math to 'Imply' what the news probably was.")
     
-    st.header("2. Leak-Proof Data Pipeline")
-    st.markdown("""
-    A common error in AI finance is "Look-Ahead Bias" (using today's data to predict today).
-    
-    **Our Solution: The `shift(1)` Protocol**
-    When calculating the Sentiment Z-Score (to detect Anomalies/Black Swans), the code strictly uses:
-    """)
-    st.code("""
-    # Realism Code Block
-    df['Rolling_Mean'] = df['Signal'].shift(1).rolling(365).mean()
-    """, language="python")
-    st.markdown("""
-    This ensures the AI defines "Panic" based only on what it knew *yesterday*, making the backtest valid for real-world trading.
-    """)
-    
-    st.header("3. The Hybrid Engine")
-    st.markdown("""
-    We combine **MCWSI (Verified History)** with **Implied Sentiment (Gap Filling)** to create a continuous 5-year timeline of market psychology.
-    """)
+    st.markdown("**The Implied Sentiment Formula:**")
     st.latex(r'''
-    S_{implied} \approx \frac{\text{RSI}_{norm} + (1 - \text{VIX}_{norm})}{2}
+    S_{implied} = \frac{RSI_{norm} + (1 - VIX_{norm})}{2}
     ''')
+    st.markdown("""
+    * **RSI:** Measures if people are buying too much.
+    * **VIX:** Measures how scared people are.
+    * **Logic:** If people are Scared (High VIX) and Selling (Low RSI), the news was probably bad.
+    """)
+
+    st.subheader("3. The Math: Detecting Panic (Z-Score)")
+    st.markdown("How does the AI know if today is 'Normal' or 'Crazy'? It calculates a **Z-Score**.")
+    st.latex(r'''
+    Z = \frac{X - \mu}{\sigma}
+    ''')
+    st.markdown("""
+    * $X$ = Today's Sentiment Score
+    * $\mu$ = The Average Score of the last year
+    * $\sigma$ = The Volatility (Standard Deviation)
+    * **Translation:** If $Z$ is below -1.5, it means the mood is historically bad (Panic).
+    """)
+
+    st.subheader("4. Realism Check (Why we don't have a 'Neutral' Zone)")
+    st.markdown("""
+    You might ask: *"Why doesn't the AI just say 'I don't know'?"*
+    
+    We tested that! We added a "Neutral Zone" where the AI would sit in cash if it wasn't sure. 
+    **It lost money.**
+    
+    Why? **Transaction Costs.**
+    Every time you buy or sell, you pay a tiny fee (spread/slippage). If the AI is constantly getting in and out because it's "unsure," those fees add up.
+    
+    **Our Strategy:** It is mathematically better to stay in the market ("Always-In") unless there is a major crash signal.
+    """)
+
+# --- TAB 3: SETTINGS & RETRAIN ---
+with tab3:
+    st.header("🔧 Tweaks")
+    
+    st.markdown("### 1. Manual Override")
+    sentiment_mode = st.radio("Where should the AI get sentiment?", ["Auto-Scrape News", "Manual Input Slider"])
+    
+    manual_val = 0.0
+    if sentiment_mode == "Manual Input Slider":
+        manual_val = st.slider("Set Sentiment (-1.0 is Panic, 1.0 is Euphoria)", -1.0, 1.0, 0.0, 0.1)
+    
+    st.markdown("### 2. Active Learning")
+    st.write("Click this once a week to teach the AI using the latest data.")
+    
+    if st.button("Retrain AI Brain"):
+        curr_ts = time.time()
+        time_since_retrain = curr_ts - st.session_state['last_retrain']
+        if time_since_retrain < RETRAIN_COOLDOWN_SECONDS:
+            st.error(f"Please wait {int((RETRAIN_COOLDOWN_SECONDS - time_since_retrain)/60)} minutes.")
+        else:
+            st.session_state['last_retrain'] = curr_ts
+            # (Retraining logic same as before...)
+            model, scaler, config = load_resources()
+            if model is None:
+                st.error("Model missing.")
+            else:
+                with st.spinner("🧠 Teaching the AI..."):
+                    # Quick fine-tune mock-up
+                    try:
+                        df, _, _ = run_analysis("Auto-Scrape News")
+                        batch = df.iloc[-60:][['Returns', 'VIX', 'Mom_10', 'Sent_Z_Score', 'Panic_Signal']]
+                        scaled = scaler.transform(batch)
+                        
+                        xs, ys = [], []
+                        for i in range(len(scaled) - SEQ_LEN):
+                            xs.append(scaled[i:i+SEQ_LEN])
+                            ys.append(scaled[i+SEQ_LEN, 0])
+                        
+                        X_t = torch.FloatTensor(np.array(xs)).to(device)
+                        y_t = torch.FloatTensor(np.array(ys)).unsqueeze(1).to(device)
+                        
+                        opt = torch.optim.Adam(model.parameters(), lr=0.0001)
+                        crit = nn.MSELoss()
+                        model.train()
+                        for _ in range(5):
+                            opt.zero_grad()
+                            loss = crit(model(X_t), y_t)
+                            loss.backward()
+                            opt.step()
+                        torch.save(model.state_dict(), MODEL_FILE)
+                        st.success("✅ Brain Updated Successfully!")
+                    except Exception as e:
+                        st.error(f"Error: {e}")
 
 st.markdown("---")
-st.markdown("""
-### ⚖️ Disclaimer
-**Educational Use Only.** This tool uses experimental AI models. 
-* "BULLISH/BEARISH" signals are probabilistic outputs, not financial advice.
-* Trading involves significant risk.
-""")
+st.caption("Disclaimer: This is an educational tool demonstrating AI concepts. Not financial advice.")
