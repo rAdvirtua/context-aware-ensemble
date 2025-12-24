@@ -65,7 +65,6 @@ The model follows a **Mixture of Experts (MoE)** design:
 ## File Structure
 
 * `app.py`: The main Streamlit application containing the frontend, inference logic, and retraining module.
-* `sp500_screener.py`: A standalone script to scan the Top 50 S&P 500 stocks for individual opportunities.
 * `hybrid_model.pth`: Pre-trained PyTorch model weights.
 * `scaler.pkl`: Scikit-learn scaler for data normalization.
 * `model_config.json`: Hyperparameter configuration file.
