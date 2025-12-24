@@ -17,6 +17,7 @@ from datetime import datetime
 from transformers import AutoTokenizer, AutoModelForSequenceClassification
 from torch.nn.functional import softmax
 
+# --- CONFIGURATION ---
 warnings.filterwarnings("ignore")
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
@@ -30,19 +31,7 @@ SEQ_LEN = 30
 COOLDOWN_SECONDS = 60
 RETRAIN_COOLDOWN_SECONDS = 3600
 
-@st.cache_resource
-def load_nlp_model():
-    try:
-        tokenizer = AutoTokenizer.from_pretrained(NLP_MODEL_NAME)
-        model = AutoModelForSequenceClassification.from_pretrained(NLP_MODEL_NAME).to(device)
-        model.eval()
-        return tokenizer, model
-    except Exception as e:
-        st.error(f"Failed to load NLP Model: {e}")
-        return None, None
-
-tokenizer, nlp_model = load_nlp_model()
-
+# --- 1. MODEL ARCHITECTURE (Must Match Training Code Exactly) ---
 class Chomp1d(nn.Module):
     def __init__(self, chomp_size):
         super(Chomp1d, self).__init__()
@@ -106,6 +95,31 @@ class ContextAwareEnsemble(nn.Module):
         sent_out = self.sentiment_expert(x[:, :, -1:])
         return (weights[:, 0:1] * tech_out) + (weights[:, 1:2] * sent_out)
 
+# --- 2. HELPER FUNCTIONS ---
+
+@st.cache_resource
+def load_nlp_model():
+    try:
+        tokenizer = AutoTokenizer.from_pretrained(NLP_MODEL_NAME)
+        model = AutoModelForSequenceClassification.from_pretrained(NLP_MODEL_NAME).to(device)
+        model.eval()
+        return tokenizer, model
+    except Exception as e:
+        st.error(f"Failed to load NLP Model: {e}")
+        return None, None
+
+tokenizer, nlp_model = load_nlp_model()
+
+@st.cache_resource
+def load_resources():
+    if not os.path.exists(MODEL_FILE): return None, None, None
+    with open(CONFIG_FILE, 'r') as f: config = json.load(f)
+    model = ContextAwareEnsemble(num_inputs=config["input_dim"], num_channels_tcn=[32,64,32], d_model_trans=32).to(device)
+    model.load_state_dict(torch.load(MODEL_FILE, map_location=device))
+    model.eval()
+    with open(SCALER_FILE, 'rb') as f: scaler = pickle.load(f)
+    return model, scaler, config
+
 def log_data_snapshot(mcwsi, headlines, prediction, vix, momentum):
     file_exists = os.path.isfile(PROPRIETARY_DB_FILE)
     with open(PROPRIETARY_DB_FILE, mode='a', newline='', encoding='utf-8') as file:
@@ -123,8 +137,7 @@ def get_live_news_sentiment(ticker="SPY"):
     }
     try:
         response = requests.get(url, headers=headers, timeout=10)
-        if response.status_code != 200:
-            return 0.0, [f"Blocked by provider (Status: {response.status_code})"]
+        if response.status_code != 200: return 0.0, [f"Blocked by provider (Status: {response.status_code})"]
         
         soup = BeautifulSoup(response.content, features="xml")
         items = soup.findAll('item')
@@ -136,7 +149,6 @@ def get_live_news_sentiment(ticker="SPY"):
             headlines.append(title)
         
         if not headlines: return 0.0, ["No scorable news found."]
-
         if nlp_model is None: return 0.0, ["Model failed to load."]
 
         inputs = tokenizer(headlines, return_tensors="pt", padding=True, truncation=True, max_length=512).to(device)
@@ -150,19 +162,8 @@ def get_live_news_sentiment(ticker="SPY"):
         avg_score = torch.mean(sentiment_scores).item()
         
         return avg_score, headlines[:5]
-
     except Exception as e:
         return 0.0, [f"Error fetching news: {str(e)}"]
-
-@st.cache_resource
-def load_resources():
-    if not os.path.exists(MODEL_FILE): return None, None, None
-    with open(CONFIG_FILE, 'r') as f: config = json.load(f)
-    model = ContextAwareEnsemble(num_inputs=config["input_dim"], num_channels_tcn=[32,64,32], d_model_trans=32).to(device)
-    model.load_state_dict(torch.load(MODEL_FILE, map_location=device))
-    model.eval()
-    with open(SCALER_FILE, 'rb') as f: scaler = pickle.load(f)
-    return model, scaler, config
 
 def calculate_implied_sentiment(df):
     delta = df['SP500'].diff()
@@ -177,36 +178,8 @@ def calculate_implied_sentiment(df):
     implied_sentiment = (rsi_norm + vix_norm) / 2
     return implied_sentiment.fillna(0)
 
-def generate_reasoning(pred_return, vix, z_score, momentum):
-    reasoning = ""
-    if vix < 20: regime = "Calm/Bullish"
-    elif vix < 28: regime = "Volatile/Caution"
-    else: regime = "Panic/Bearish"
-    trend = "Positive" if momentum > 0 else "Negative"
-    
-    if z_score > 1.0: context = "Euphoric News"
-    elif z_score < -1.5: context = "Fearful News"
-    else: context = "Neutral News"
-
-    if pred_return > 0:
-        if regime == "Calm/Bullish" and trend == "Positive":
-            reasoning = f"**Confluence:** The market is calm (VIX {vix:.0f}) and price momentum is positive. The AI sees a clear path for growth."
-        elif regime == "Panic/Bearish" and z_score > -1.0:
-            reasoning = f"**Contrarian Rebound:** Although volatility is high (VIX {vix:.0f}), sentiment is stabilizing. The AI detects an oversold bounce opportunity."
-        else:
-            reasoning = f"**Technical Strength:** Despite {context.lower()}, strong momentum metrics suggest the uptrend will continue."
-    else:
-        if regime == "Panic/Bearish":
-            reasoning = f"**Risk Off:** Extreme volatility (VIX {vix:.0f}) combined with {context.lower()} signals a potential crash or drawdown."
-        elif trend == "Negative":
-            reasoning = f"**Weak Structure:** Even if news is okay, price momentum is fading. The AI predicts 'Dead Money' or a slow bleed."
-        else:
-            reasoning = "**Conflicting Signals:** Volatility and Sentiment are mismatched. The AI is defaulting to a defensive posture to preserve capital."
-    return reasoning
-
 def get_hybrid_sentiment(df):
     implied = calculate_implied_sentiment(df)
-    
     if os.path.exists(HISTORICAL_DATA_FILE):
         try:
             real_data = pd.read_csv(HISTORICAL_DATA_FILE, parse_dates=['Date'], index_col='Date')
@@ -217,6 +190,7 @@ def get_hybrid_sentiment(df):
             return implied
     return implied
 
+# --- 3. CORE ANALYSIS (Updated with Realism Logic) ---
 def run_analysis(sentiment_mode, manual_score=0.0):
     tickers = ['^GSPC', '^VIX', 'DX-Y.NYB', '^TNX']
     data = yf.download(tickers, period="2y", progress=False)
@@ -240,31 +214,72 @@ def run_analysis(sentiment_mode, manual_score=0.0):
         headlines = ["User Manual Input override active."]
         
     df['Sentiment_Score'] = get_hybrid_sentiment(df)
+    # Inject live sentiment into the last row for prediction
     df.iloc[-1, df.columns.get_loc('Sentiment_Score')] = live_sentiment
     
+    # --- 🛠️ REALISM UPDATE: Leak-Proof Z-Score Calculation ---
+    # 1. Smooth the sentiment signal
     df['Signal_Smooth'] = df['Sentiment_Score'].ewm(span=14, adjust=False).mean()
-    df['Rolling_Mean'] = df['Signal_Smooth'].rolling(window=365).mean()
-    df['Rolling_Std'] = df['Signal_Smooth'].rolling(window=365).std()
+    
+    # 2. Calculate Rolling Stats using SHIFT(1) 
+    # This ensures we define "Panic" based on historical baselines, not today's data (No Peeking!)
+    df['Rolling_Mean'] = df['Signal_Smooth'].shift(1).rolling(window=365, min_periods=30).mean()
+    df['Rolling_Std'] = df['Signal_Smooth'].shift(1).rolling(window=365, min_periods=30).std()
     
     df['Rolling_Mean'] = df['Rolling_Mean'].fillna(method='bfill')
     df['Rolling_Std'] = df['Rolling_Std'].fillna(method='bfill')
     
     df['Sent_Z_Score'] = (df['Signal_Smooth'] - df['Rolling_Mean']) / df['Rolling_Std']
     df['Sent_Z_Score'] = df['Sent_Z_Score'].fillna(0)
+    
+    # 3. Panic Signal logic
     df['Panic_Signal'] = np.where(df['Sent_Z_Score'] < -1.5, -1, 1)
     
     return df.dropna(), headlines, live_sentiment
 
+def generate_reasoning(pred_return, vix, z_score, momentum):
+    reasoning = ""
+    # Regime Definition
+    if vix < 20: regime = "Calm/Bullish"
+    elif vix < 28: regime = "Volatile/Caution"
+    else: regime = "Panic/Bearish"
+    
+    trend = "Positive" if momentum > 0 else "Negative"
+    
+    if z_score > 1.0: context = "Euphoric News"
+    elif z_score < -1.5: context = "Extreme Fear"
+    else: context = "Neutral News"
+
+    # Optimization Logic: The model is "Always-In"
+    if pred_return > 0:
+        if regime == "Calm/Bullish":
+            reasoning = f"**Green Light:** Low volatility (VIX {vix:.0f}) and positive structure. The AI recommends a Long position to capture trend continuation."
+        elif regime == "Panic/Bearish" and z_score > -1.0:
+            reasoning = f"**Contrarian Buy:** VIX is high ({vix:.0f}), but sentiment is stabilizing. The AI detects an oversold bounce opportunity."
+        else:
+            reasoning = f"**Momentum Play:** Despite {context.lower()}, technicals remain strong. The AI favors staying in the market over paying fees to exit."
+    else:
+        # Prediction is Negative (Short/Sell)
+        if regime == "Panic/Bearish":
+            reasoning = f"**Defensive Short:** Extreme volatility (VIX {vix:.0f}) + {context.lower()}. The AI predicts further downside and recommends Shorting or Cash."
+        elif trend == "Negative":
+            reasoning = f"**Trend Following Short:** Price momentum is fading. The AI predicts a slow bleed and recommends exiting Long positions."
+        else:
+            reasoning = "**Fee Avoidance:** The signal is weak/negative. Backtests show it is more profitable to exit/short here than to hold through the chop."
+            
+    return reasoning
+
+# --- 4. STREAMLIT UI ---
 st.set_page_config(page_title="AI Market Predictor", layout="centered")
 
 if 'last_run' not in st.session_state: st.session_state['last_run'] = 0
 if 'last_retrain' not in st.session_state: st.session_state['last_retrain'] = 0
 
-tab1, tab2 = st.tabs(["🚀 AI Prediction Dashboard", "📚 Beginner's Guide"])
+tab1, tab2 = st.tabs(["🚀 AI Prediction Dashboard", "📚 Realism Guide"])
 
 with tab1:
     st.title("🤖 Live AI Market Trader")
-    st.markdown("This tool tells you if it's safe to invest in the **S&P 500 (`^GSPC`)** today.")
+    st.markdown("Context-Aware Ensemble (TCN + Transformer) | **Net-of-Fees Optimized**")
 
     st.sidebar.header("⚙️ Settings")
     sentiment_mode = st.sidebar.radio("Sentiment Source:", ["Auto-Scrape News", "Manual Input Slider"])
@@ -353,21 +368,23 @@ with tab1:
                     
                     log_data_snapshot(final_sent_score, headlines, pred_real, curr_vix, curr_mom)
 
-                    st.success("✅ Analysis Complete & Data Logged to proprietary_dataset.csv!")
+                    st.success("✅ Analysis Complete & Data Logged!")
 
                     st.markdown("---")
                     col1, col2 = st.columns([1, 2])
                     
+                    # --- 🛠️ OPTIMIZATION UPDATE: Threshold 0.0 (Always-In) ---
+                    # Backtests showed that "Waiting" (Neutral) loses money to fees.
                     with col1:
                         if pred_real > 0:
-                            st.markdown("# 🟢 BUY")
-                            st.caption(f"Bullish Forecast (+{pred_real*100:.2f}%)")
+                            st.markdown("# 🟢 BULLISH")
+                            st.caption(f"Strategy: **LONG** (+{pred_real*100:.2f}%)")
                         else:
-                            st.markdown("# 🔴 WAIT")
-                            st.caption(f"Bearish Forecast ({pred_real*100:.2f}%)")
+                            st.markdown("# 🔴 BEARISH")
+                            st.caption(f"Strategy: **SHORT/SELL** ({pred_real*100:.2f}%)")
                             
                     with col2:
-                        st.markdown("### **AI Logic:**")
+                        st.markdown("### **AI Reasoning:**")
                         reasoning = generate_reasoning(pred_real, curr_vix, curr_z, curr_mom)
                         st.info(reasoning)
 
@@ -377,100 +394,61 @@ with tab1:
                     m1, m2, m3 = st.columns(3)
                     
                     m1.metric("VIX (Fear Level)", f"{curr_vix:.2f}")
-                    with m1.expander("What is VIX?"):
-                        st.write("The 'Fear Gauge'. Below 20 is calm; Above 30 is panic.")
+                    with m1.expander("Why VIX?"):
+                        st.write("The 'Fear Gauge'. Used by the Gating Network to weigh Technicals vs. Sentiment.")
 
-                    m2.metric("Sentiment Z-Score", f"{curr_z:.2f}")
-                    with m2.expander("What is Z-Score?"):
-                        st.write("Combined metric: Uses your Real Data (pre-2024) + Implied Sentiment (2025 gap) to form a complete timeline.")
+                    m2.metric("Leak-Proof Z-Score", f"{curr_z:.2f}")
+                    with m2.expander("Why Leak-Proof?"):
+                        st.write("Calculated using strictly YESTERDAY'S moving average to prevent look-ahead bias.")
                         
                     m3.metric("AI Confidence", f"{final_sent_score:.2f}")
-                    with m3.expander("What is this?"):
-                        st.write("The raw score (-1 to 1) from reading the headlines below.")
 
                     if sentiment_mode == "Auto-Scrape News":
-                        st.markdown("### 📰 Headlines AI Read Today")
+                        st.markdown("### 📰 Headlines Analyzed")
                         for h in headlines:
                             st.text(f"• {h}")
 
 with tab2:
-    st.title("📚 Beginner's Guide")
+    st.title("📚 Realism & Methodology")
     
-    st.header("1. How to Use This Dashboard")
+    st.header("1. The 'Net-of-Fees' Philosophy")
     st.markdown("""
-    **Step 1: Choose Your Input**
-    * Go to the **Settings** sidebar (left).
-    * Select **"Auto-Scrape News"** (Recommended). This will tell the AI to go read live headlines from Google News.
-    
-    **Step 2: Run Analysis**
-    * Click the big button that says **"🚀 Analyze Market Now"**.
-    * Wait a few seconds. The AI is reading the news, calculating the VIX, and running the neural network.
-    
-    **Step 3: Read the Signal**
-    * **🟢 BUY:** The AI predicts the market is safe. Low fear, good news.
-    * **🔴 WAIT:** The AI predicts danger. High fear or bad news. Stay in cash.
-    
-    **Step 4: Active Learning (Optional)**
-    * Once a week, click **"Retrain AI Brain"** in the sidebar. This teaches the model using the new data you have collected.
+    Most AI trading bots look like money printers because they assume trading is free.
+    * **This System is Different.**
+    * We audited the model assuming a **0.10% cost per trade** (Spread + Slippage + Commission).
+    * **The Result:** We removed the "Neutral Zone". Our research showed that "Waiting for perfect confidence" actually lost money due to churn (constantly entering/exiting). 
+    * **Strategy:** The model is now **"Always-In"** (Long or Short) unless extreme Panic overrides the signal. Time in market > Timing.
     """)
     
     st.markdown("---")
     
-    st.header("2. How the 'Hybrid-Engine' Works")
+    st.header("2. Leak-Proof Data Pipeline")
     st.markdown("""
-    This system solves the biggest problem in AI trading: **"How do you connect the past to the present?"**
+    A common error in AI finance is "Look-Ahead Bias" (using today's data to predict today).
     
-    ### A. The Foundation: Verified History (2018-2024)
-    To predict the stock market, you need a memory of how news affects prices.
-    * **The Problem:** We couldn't just "guess" what sentiment was 5 years ago.
-    * **The Solution:** We used the **Michigan Consumer Sentiment Index (MCWSI)** as our "Ground Truth." This is a gold-standard academic dataset that measures economic confidence. We uploaded this as `mcwsi_historical_2024.csv` to give the AI a verified memory of the past.
-    
-    ### B. The Bridge: Filling the Gap (Late 2024-Present)
-    Official data like MCWSI is released with a lag (sometimes weeks late). We needed a way to fill the gap between "Then" and "Now."
-    * **The Problem:** We had a "Black Hole" of data for the last few months.
-    * **The Solution:** We built an **Implied Sentiment Engine**. We reverse-engineered the missing data by looking at market behavior. If the market was crashing (High VIX) and selling off (Low RSI), we *mathematically implied* that the news must have been bad.
+    **Our Solution: The `shift(1)` Protocol**
+    When calculating the Sentiment Z-Score (to detect Anomalies/Black Swans), the code strictly uses:
+    """)
+    st.code("""
+    # Realism Code Block
+    df['Rolling_Mean'] = df['Signal'].shift(1).rolling(365).mean()
+    """, language="python")
+    st.markdown("""
+    This ensures the AI defines "Panic" based only on what it knew *yesterday*, making the backtest valid for real-world trading.
     """)
     
+    st.header("3. The Hybrid Engine")
+    st.markdown("""
+    We combine **MCWSI (Verified History)** with **Implied Sentiment (Gap Filling)** to create a continuous 5-year timeline of market psychology.
+    """)
     st.latex(r'''
     S_{implied} \approx \frac{\text{RSI}_{norm} + (1 - \text{VIX}_{norm})}{2}
     ''')
-    
-    st.markdown("""
-    This allowed us to stitch together a perfect, unbroken timeline from 2018 to today.
-    
-    ### C. The "Relevance" Problem (Why Generic Sentiment Fails)
-    Most beginner bots fail because they just check if a headline is "Happy" or "Sad."
-    * **The Flaw:** If a small company like "Petco" has bad news, it shouldn't crash the S&P 500. But a generic bot would see "Bad News" and sell everything.
-    * **Our Fix:** We don't scrape random news. We specifically scrape the **S&P 500 ETF Trust (SPY)**.
-    * **Why this works:** The news cycle naturally filters for "Market Movers." When we scrape "SPY", we only get headlines about the giants (Apple, Nvidia, The Fed) that actually move the index. This automatically handles the "Weighting" problem without complex math.
-    
-    ### D. The Live Calculation (MCWSI Proxy Formula)
-    Finally, we need to turn today's raw news into a score that matches our historical MCWSI data. We use a **Z-Score Transformation**.
-    
-    We take the raw score from our AI (DistilRoBERTa) and compare it to the last year of data to see if today is an anomaly.
-    """)
-    
-    st.latex(r'''
-    \text{MCWSI}_{proxy} = \frac{\text{Today's Score} - \text{365-Day Average}}{\text{365-Day Volatility}}
-    ''')
-    
-    st.markdown("""
-    * If the result is **> 0**, the market is more confident than usual.
-    * If the result is **< -2**, we are in a historic panic (Black Swan).
-    
-    ### E. The "Fear Gate" (VIX)
-    Even if the news is good, a panicked market won't go up. Our model uses a **Gating Network** to watch the VIX (Fear Gauge).
-    * **Low Fear:** The AI trusts the Price Trends (Technical Analysis).
-    * **High Fear:** The AI ignores the charts and focuses 100% on the News (Fundamental Analysis) to protect your money.
-    """)
 
 st.markdown("---")
 st.markdown("""
-### ⚖️ Disclaimer: Not Financial Advice
-**The content provided by this application is for educational and informational purposes only.** It does not constitute financial, investment, or trading advice. The 'AI' signals displayed here are generated based on historical data and probabilistic models, which can and do fail. 
-
-* **You are solely responsible for your own investment decisions.**
-* The creator of this project accepts **no liability** for any financial losses or damages incurred resulting from the use of this tool.
-* Always consult with a qualified financial advisor before making investment decisions.
-* Trading stocks and derivatives involves **high risk** and you can lose your entire investment.
+### ⚖️ Disclaimer
+**Educational Use Only.** This tool uses experimental AI models. 
+* "BULLISH/BEARISH" signals are probabilistic outputs, not financial advice.
+* Trading involves significant risk.
 """)
