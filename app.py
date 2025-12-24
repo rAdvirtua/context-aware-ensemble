@@ -7,28 +7,41 @@ import yfinance as yf
 from sklearn.preprocessing import StandardScaler
 import os
 import json
+import csv
 import pickle
 import warnings
 import requests
 from bs4 import BeautifulSoup
-import nltk
-from nltk.sentiment.vader import SentimentIntensityAnalyzer
 import time
+from datetime import datetime
+from transformers import AutoTokenizer, AutoModelForSequenceClassification
+from torch.nn.functional import softmax
 
 warnings.filterwarnings("ignore")
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
-try:
-    nltk.data.find('sentiment/vader_lexicon.zip')
-except LookupError:
-    nltk.download('vader_lexicon')
-
 MODEL_FILE = "hybrid_model.pth"
 SCALER_FILE = "scaler.pkl"
 CONFIG_FILE = "model_config.json"
+HISTORICAL_DATA_FILE = "mcwsi_historical_2024.csv"
+PROPRIETARY_DB_FILE = "proprietary_dataset.csv"
+NLP_MODEL_NAME = "mrm8488/distilroberta-finetuned-financial-news-sentiment-analysis"
 SEQ_LEN = 30
-COOLDOWN_SECONDS = 60 # For Analysis
-RETRAIN_COOLDOWN_SECONDS = 3600 # 1 Hour for Retraining (Heavy Task)
+COOLDOWN_SECONDS = 60
+RETRAIN_COOLDOWN_SECONDS = 3600
+
+@st.cache_resource
+def load_nlp_model():
+    try:
+        tokenizer = AutoTokenizer.from_pretrained(NLP_MODEL_NAME)
+        model = AutoModelForSequenceClassification.from_pretrained(NLP_MODEL_NAME).to(device)
+        model.eval()
+        return tokenizer, model
+    except Exception as e:
+        st.error(f"Failed to load NLP Model: {e}")
+        return None, None
+
+tokenizer, nlp_model = load_nlp_model()
 
 class Chomp1d(nn.Module):
     def __init__(self, chomp_size):
@@ -93,37 +106,51 @@ class ContextAwareEnsemble(nn.Module):
         sent_out = self.sentiment_expert(x[:, :, -1:])
         return (weights[:, 0:1] * tech_out) + (weights[:, 1:2] * sent_out)
 
+def log_data_snapshot(mcwsi, headlines, prediction, vix, momentum):
+    file_exists = os.path.isfile(PROPRIETARY_DB_FILE)
+    with open(PROPRIETARY_DB_FILE, mode='a', newline='', encoding='utf-8') as file:
+        writer = csv.writer(file)
+        if not file_exists:
+            writer.writerow(["timestamp", "mcwsi_score", "vix", "momentum", "prediction", "num_articles", "headlines_json"])
+        timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        headlines_json = json.dumps(headlines)
+        writer.writerow([timestamp, mcwsi, vix, momentum, prediction, len(headlines), headlines_json])
+
 def get_live_news_sentiment(ticker="SPY"):
     url = f"https://news.google.com/rss/search?q={ticker}+stock+news&hl=en-US&gl=US&ceid=US:en"
     headers = {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
-        'Accept-Language': 'en-US,en;q=0.9',
-        'Referer': 'https://www.google.com/'
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
     }
     try:
         response = requests.get(url, headers=headers, timeout=10)
         if response.status_code != 200:
             return 0.0, [f"Blocked by provider (Status: {response.status_code})"]
-
+        
         soup = BeautifulSoup(response.content, features="xml")
         items = soup.findAll('item')
-        
         if not items: return 0.0, ["No news found."]
         
-        parsed_news = []
+        headlines = []
         for item in items[:15]:
-            title = item.title.text
-            clean_title = title.split(" - ")[0]
-            parsed_news.append(clean_title)
-            
-        vader = SentimentIntensityAnalyzer()
-        scores = [vader.polarity_scores(h)['compound'] for h in parsed_news]
+            title = item.title.text.split(" - ")[0]
+            headlines.append(title)
         
-        if not scores: return 0.0, ["No scorable news found."]
+        if not headlines: return 0.0, ["No scorable news found."]
+
+        if nlp_model is None: return 0.0, ["Model failed to load."]
+
+        inputs = tokenizer(headlines, return_tensors="pt", padding=True, truncation=True, max_length=512).to(device)
+        with torch.no_grad():
+            outputs = nlp_model(**inputs)
+            probs = softmax(outputs.logits, dim=1)
+
+        neg_score = probs[:, 0]
+        pos_score = probs[:, 2]
+        sentiment_scores = pos_score - neg_score
+        avg_score = torch.mean(sentiment_scores).item()
         
-        avg_score = np.mean(scores)
-        return avg_score, parsed_news[:5]
-        
+        return avg_score, headlines[:5]
+
     except Exception as e:
         return 0.0, [f"Error fetching news: {str(e)}"]
 
@@ -152,11 +179,9 @@ def calculate_implied_sentiment(df):
 
 def generate_reasoning(pred_return, vix, z_score, momentum):
     reasoning = ""
-    
     if vix < 20: regime = "Calm/Bullish"
     elif vix < 28: regime = "Volatile/Caution"
     else: regime = "Panic/Bearish"
-    
     trend = "Positive" if momentum > 0 else "Negative"
     
     if z_score > 1.0: context = "Euphoric News"
@@ -177,8 +202,20 @@ def generate_reasoning(pred_return, vix, z_score, momentum):
             reasoning = f"**Weak Structure:** Even if news is okay, price momentum is fading. The AI predicts 'Dead Money' or a slow bleed."
         else:
             reasoning = "**Conflicting Signals:** Volatility and Sentiment are mismatched. The AI is defaulting to a defensive posture to preserve capital."
-            
     return reasoning
+
+def get_hybrid_sentiment(df):
+    implied = calculate_implied_sentiment(df)
+    
+    if os.path.exists(HISTORICAL_DATA_FILE):
+        try:
+            real_data = pd.read_csv(HISTORICAL_DATA_FILE, parse_dates=['Date'], index_col='Date')
+            real_aligned = real_data.reindex(df.index)
+            hybrid = real_aligned['MCWSI'].combine_first(implied)
+            return hybrid
+        except Exception:
+            return implied
+    return implied
 
 def run_analysis(sentiment_mode, manual_score=0.0):
     tickers = ['^GSPC', '^VIX', 'DX-Y.NYB', '^TNX']
@@ -191,20 +228,18 @@ def run_analysis(sentiment_mode, manual_score=0.0):
     else: df = data['Adj Close'].copy() if 'Adj Close' in data.columns else data['Close'].copy()
     
     df = df.rename(columns={'^GSPC': 'SP500', '^VIX': 'VIX', 'DX-Y.NYB': 'DXY', '^TNX': 'TNX'})
-    
     df['Returns'] = np.log(df['SP500'] / df['SP500'].shift(1))
     df['Vol_MA'] = df['VIX'].rolling(window=10).mean()
     df['Mom_10'] = df['SP500'].pct_change(10)
     
     headlines = []
-    
     if sentiment_mode == "Auto-Scrape News":
         live_sentiment, headlines = get_live_news_sentiment("SPY")
     else:
         live_sentiment = manual_score
         headlines = ["User Manual Input override active."]
-    
-    df['Sentiment_Score'] = calculate_implied_sentiment(df)
+        
+    df['Sentiment_Score'] = get_hybrid_sentiment(df)
     df.iloc[-1, df.columns.get_loc('Sentiment_Score')] = live_sentiment
     
     df['Signal_Smooth'] = df['Sentiment_Score'].ewm(span=14, adjust=False).mean()
@@ -246,7 +281,6 @@ with tab1:
     
     if st.sidebar.button("Retrain AI Brain"):
         curr_ts = time.time()
-        # --- SPAM PROTECTION CHECK ---
         time_since_retrain = curr_ts - st.session_state['last_retrain']
         if time_since_retrain < RETRAIN_COOLDOWN_SECONDS:
             mins_left = int((RETRAIN_COOLDOWN_SECONDS - time_since_retrain) / 60)
@@ -316,8 +350,10 @@ with tab1:
                     curr_vix = df['VIX'].iloc[-1]
                     curr_z = df['Sent_Z_Score'].iloc[-1]
                     curr_mom = df['Mom_10'].iloc[-1]
+                    
+                    log_data_snapshot(final_sent_score, headlines, pred_real, curr_vix, curr_mom)
 
-                    st.success("✅ Analysis Complete!")
+                    st.success("✅ Analysis Complete & Data Logged to proprietary_dataset.csv!")
 
                     st.markdown("---")
                     col1, col2 = st.columns([1, 2])
@@ -346,7 +382,7 @@ with tab1:
 
                     m2.metric("Sentiment Z-Score", f"{curr_z:.2f}")
                     with m2.expander("What is Z-Score?"):
-                        st.write("Context of news. Derived from Implied Sentiment (VIX/RSI) to reconstruct historical context.")
+                        st.write("Combined metric: Uses your Real Data (pre-2024) + Implied Sentiment (2025 gap) to form a complete timeline.")
                         
                     m3.metric("AI Confidence", f"{final_sent_score:.2f}")
                     with m3.expander("What is this?"):
@@ -358,46 +394,37 @@ with tab1:
                             st.text(f"• {h}")
 
 with tab2:
-    st.title("📚 How This Works (For Beginners)")
+    st.title("📚 The Data Flywheel & Hybrid Architecture")
     
     st.markdown("""
-    ### 1. What is this app?
-    This app uses Artificial Intelligence to answer one simple question: 
-    **"Is it safe to put money in the stock market today?"**
+    ### 1. The "Data Moat" Strategy
+    Most retail trading bots fail because they rely on generic data. This system is different. It is a **Data Flywheel**.
     
-    It doesn't guess randomly. It combines two superpowers:
-    1.  **Reading:** It reads live news headlines (Bloomberg, Reuters) to understand the "Vibe."
-    2.  **Math:** It looks at charts and Volatility (Fear) to check the facts.
+    * **Data Harvesting:** Every time you click "Analyze Market Now", the system saves the live news headlines, the calculated sentiment (MCWSI), and the market reaction to a secure local file (`proprietary_dataset.csv`).
+    * **Zero-Dependency:** Over time, you build a massive, proprietary text-to-market dataset that no one else has. You stop relying on Bloomberg or Google News because you own the history.
     
-    ### 2. The Decision Logic
-    The AI gives you one of two signals based on the conflict between Risk (VIX) and News (Sentiment).
+    ### 2. The Hybrid "Time-Bridge" Engine
+    We face a common problem: *How do we train a news model if we can't afford 20 years of Bloomberg archives?*
     
-    #### 🟢 BUY (Green Light)
-    * **The Setup:** The AI sees a path for profit. This usually means Low Fear (VIX) + Positive Momentum.
-    * **Action:** Consider entering a position in **SPY** or **VOO**.
+    We use a **Hybrid Stitching** technique:
     
-    #### 🔴 WAIT / SELL (Red Light)
-    * **The Setup:** The AI predicts a drop or "Dead Money" (Sideways movement).
-    * **Why?** Even if news is good, if the market is too fearful (High VIX), stocks won't go up.
-    * **Action:** Stay in **Cash** (Risk-Off). Protect your capital.
+    1.  **The Gold Standard (2018-2024):** We load your verified `mcwsi_historical_2024.csv`. This provides ground-truth sentiment data.
+    2.  **The Bridge (2024-Present):** For the gap between your static dataset and "today", the system switches to **"Implied Sentiment"**. It reverse-engineers what the news *must have been* based on VIX and RSI volatility.
+    3.  **The Live Edge (Today):** For the current second, it scrapes live data.
     
-    ### 3. The "Weather" Analogy 
-    Imagine the Stock Market is an Ocean, and you are a Sailor.
-    * **VIX (Fear):** This is the **Storm Forecast**. If VIX is high, there is a hurricane. Don't sail!
-    * **Sentiment:** This is the **Wind**. If news is positive, the wind is at your back (Good).
-    * **Decision:** Even if the wind is good, we don't sail into a hurricane.
-
-    ### 4. The Billion-Dollar Problem (and our free fix)
-    Big hedge funds pay millions of dollars for "Bloomberg Terminals" to download 20 years of news archives. 
+    This creates a seamless, unbreakable timeline of market context, allowing the Neural Network to see the "Big Picture" without gaps.
     
-    **We are limited by Paywalls.** We cannot scrape news from 6 months ago for free.
+    ### 3. The Neural Architecture
+    The decision engine is a **Mixture of Experts (MoE)** that dynamically weighs two strategies:
     
-    **Our Solution: "Implied Sentiment"**
-    Instead of paying for old news, we look at **Market Behavior**.
-    * If the market was crashing in the past, we assume the news was *Bad*.
-    * If the market was soaring, we assume the news was *Good*.
+    * **Expert A (The Chartist):** A Temporal Convolutional Network (TCN) that looks at price action and momentum.
+    * **Expert B (The Analyst):** A Transformer that looks at Sentiment Z-Scores.
+    * **The Gate:** A Gating Network watches the VIX. If Fear is high, it listens to the Analyst (Sentiment). If Fear is low, it listens to the Chartist (Price).
     
-    We use this logic to reconstruct a "Simulated History" of sentiment. This allows our AI to have a mathematical baseline (Z-Score) without needing a corporate budget!
+    ### 4. How to Use
+    1.  **Check the Signal:** Green means risk-on, Red means cash-preservation.
+    2.  **Read the Reasoning:** The AI explains *why* (e.g., "Market is too fearful despite good news").
+    3.  **Retrain Weekly:** Use the sidebar to fine-tune the model on the data you have harvested.
     """)
 
 st.markdown("---")
