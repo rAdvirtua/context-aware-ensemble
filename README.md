@@ -105,7 +105,7 @@ The model follows a **Mixture of Experts (MoE)** design:
 * `hybrid_model.pth`: Pre-trained PyTorch model weights.
 * `scaler.pkl`: Scikit-learn scaler for data normalization.
 * `model_config.json`: Hyperparameter configuration file.
-* `mcwsi_historical_2024.csv`: **[REQUIRED]** The base historical dataset (2018-2024) containing verified sentiment data.
+* `mcwsi_historical_2024.csv`: The base historical dataset (2018-2024) containing verified sentiment data.
 * `proprietary_dataset.csv`: **[AUTO-GENERATED]** The app creates this file to store your unique dataset (Live News + Market Reactions).
 
 ## Disclaimer
