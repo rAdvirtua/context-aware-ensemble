@@ -1,1 +1,0 @@
-{"input_dim": 5, "seq_len": 30, "features": ["Returns", "VIX", "Mom_10", "Sent_Z_Score", "Panic_Signal"]}
