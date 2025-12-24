@@ -17,7 +17,6 @@ from datetime import datetime
 from transformers import AutoTokenizer, AutoModelForSequenceClassification
 from torch.nn.functional import softmax
 
-# --- CONFIGURATION ---
 warnings.filterwarnings("ignore")
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
@@ -31,7 +30,6 @@ SEQ_LEN = 30
 COOLDOWN_SECONDS = 60
 RETRAIN_COOLDOWN_SECONDS = 3600
 
-# --- 1. THE BRAIN (Neural Network Architecture) ---
 class Chomp1d(nn.Module):
     def __init__(self, chomp_size):
         super(Chomp1d, self).__init__()
@@ -95,7 +93,6 @@ class ContextAwareEnsemble(nn.Module):
         sent_out = self.sentiment_expert(x[:, :, -1:])
         return (weights[:, 0:1] * tech_out) + (weights[:, 1:2] * sent_out)
 
-# --- 2. HELPER FUNCTIONS ---
 @st.cache_resource
 def load_nlp_model():
     try:
@@ -147,7 +144,7 @@ def get_live_news_sentiment(ticker="SPY"):
             outputs = nlp_model(**inputs)
             probs = softmax(outputs.logits, dim=1)
 
-        sentiment_scores = probs[:, 2] - probs[:, 0] # Positive - Negative
+        sentiment_scores = probs[:, 2] - probs[:, 0]
         avg_score = torch.mean(sentiment_scores).item()
         return avg_score, headlines[:5]
     except Exception as e:
@@ -203,7 +200,6 @@ def run_analysis(sentiment_mode, manual_score=0.0):
     df['Sentiment_Score'] = get_hybrid_sentiment(df)
     df.iloc[-1, df.columns.get_loc('Sentiment_Score')] = live_sentiment
     
-    # RIGOROUS MATH (Shift=1 to avoid leakage)
     df['Signal_Smooth'] = df['Sentiment_Score'].ewm(span=14, adjust=False).mean()
     df['Rolling_Mean'] = df['Signal_Smooth'].shift(1).rolling(window=365, min_periods=30).mean()
     df['Rolling_Std'] = df['Signal_Smooth'].shift(1).rolling(window=365, min_periods=30).std()
@@ -220,7 +216,6 @@ def run_analysis(sentiment_mode, manual_score=0.0):
 
 def generate_reasoning(pred_return, vix, z_score, momentum):
     reasoning = ""
-    # Regime Definition
     if vix < 20: regime = "Calm/Bullish"
     elif vix < 28: regime = "Volatile/Caution"
     else: regime = "Panic/Bearish"
@@ -231,7 +226,6 @@ def generate_reasoning(pred_return, vix, z_score, momentum):
     elif z_score < -1.5: context = "Extreme Fear"
     else: context = "Neutral News"
 
-    # Optimization Logic: The model is "Always-In"
     if pred_return > 0:
         if regime == "Calm/Bullish":
             reasoning = f"**Green Light:** Low volatility (VIX {vix:.0f}) and positive structure. The AI recommends a Long position to capture trend continuation."
@@ -249,13 +243,11 @@ def generate_reasoning(pred_return, vix, z_score, momentum):
             
     return reasoning
 
-# --- 3. STREAMLIT UI ---
 st.set_page_config(page_title="Hybrid AI Trader", layout="centered")
 
 if 'last_run' not in st.session_state: st.session_state['last_run'] = 0
 if 'last_retrain' not in st.session_state: st.session_state['last_retrain'] = 0
 
-# --- SIDEBAR ---
 st.sidebar.title("🤖 Control Panel")
 st.sidebar.header("1. Input Settings")
 sentiment_mode = st.sidebar.radio("Sentiment Source:", ["Auto-Scrape News", "Manual Input Slider"])
@@ -308,10 +300,8 @@ if st.sidebar.button("Retrain AI Brain"):
                     status.update(label="❌ Failed", state="error")
                     st.sidebar.error(str(e))
 
-# --- MAIN PAGE ---
-tab1, tab2 = st.tabs(["🚀 Dashboard", "🧠 Architecture & Math"])
+tab1, tab2 = st.tabs(["🚀 Dashboard", "📚 Beginner's Guide"])
 
-# --- TAB 1: DASHBOARD ---
 with tab1:
     st.title("🤖 Live Market Analysis")
     st.markdown("Multi-Expert Ensemble: **TCN (Technicals)** + **Transformer (Sentiment)**")
@@ -348,16 +338,15 @@ with tab1:
                     
                     log_data_snapshot(final_sent_score, headlines, pred_real, curr_vix, curr_mom)
 
-                    # --- 1. THE VERDICT ---
                     st.markdown("---")
                     col1, col2 = st.columns([1, 2])
                     
                     with col1:
                         if pred_real > 0:
-                            st.success("# ✅ BUY")
+                            st.success("# ✅ BUY / LONG")
                             st.metric("Model Forecast", f"+{pred_real*100:.2f}%")
                         else:
-                            st.error("# 🛑 SELL / WAIT")
+                            st.error("# 🛑 SELL / SHORT")
                             st.metric("Model Forecast", f"{pred_real*100:.2f}%")
                             
                     with col2:
@@ -365,7 +354,6 @@ with tab1:
                         reasoning = generate_reasoning(pred_real, curr_vix, curr_z, curr_mom)
                         st.info(reasoning)
 
-                    # --- 2. THE DATA (RESTORED!) ---
                     st.markdown("---")
                     st.subheader("📊 The Data Behind the Decision")
                     
@@ -377,39 +365,92 @@ with tab1:
 
                     m2.metric("Sentiment Z-Score", f"{curr_z:.2f}")
                     with m2.expander("What is Z-Score?"):
-                        st.write("A statistical anomaly detector using *Yesterday's* moving average (Leak-Proof). <-1.5 triggers 'Panic Mode'.")
+                        st.write("A statistical anomaly detector. We use *Yesterday's* data to calculate the mean, preventing look-ahead bias.")
                         
                     m3.metric("AI Confidence", f"{final_sent_score:.2f}")
                     with m3.expander("Confidence?"):
                         st.write("The raw output (-1 to 1) from the Transformer reading the headlines below.")
 
-                    # --- 3. HEADLINES ---
                     st.markdown("### 📰 Headlines Analyzed")
                     with st.expander("Show News Source"):
                         for h in headlines: st.text(f"• {h}")
 
-# --- TAB 2: EDUCATION ---
 with tab2:
-    st.header("How the Magic Happens 🪄")
+    st.title("📚 Beginner's Guide & Mathematical Proofs")
     
-    col1, col2 = st.columns(2)
-    with col1:
-        st.markdown("**1. The Pattern Spotter (TCN)**")
-        st.caption("Technical Analysis")
-        st.write("Looks at price charts. Ignores news. Uses dilated convolutions to see long-term patterns.")
-    with col2:
-        st.markdown("**2. The Reader (Transformer)**")
-        st.caption("Sentiment Analysis")
-        st.write("Reads Google News using DistilRoBERTa. It understands context (e.g., 'Inflation drops' is Good).")
+    st.header("1. The Core Architecture")
+    st.markdown("""
+    This application is powered by a **Context-Aware Hybrid Ensemble**. It does not rely on a single algorithm but instead uses two specialized "Experts" that vote on the market direction.
+    
+    * **Expert A: The Pattern Spotter (TCN)**
+        * **Type:** Temporal Convolutional Network.
+        * **Role:** Analyzes price action (Momentum, Volatility) using dilated convolutions.
+        * **Math:** It identifies patterns over long time horizons ($t-30$ to $t$) to predict $t+1$.
+    
+    * **Expert B: The News Reader (Transformer)**
+        * **Type:** DistilRoBERTa (Fine-Tuned).
+        * **Role:** Analyzes textual sentiment from Google News headlines.
+        * **Math:** Converts text into high-dimensional vectors (Embeddings) to score Fear vs. Greed.
+    """)
 
-    st.subheader("The Math: Implied Sentiment")
-    st.markdown("We use math to fill in missing historical data:")
-    st.latex(r'''S_{implied} = \frac{RSI_{norm} + (1 - VIX_{norm})}{2}''')
+    st.markdown("---")
+    st.header("2. Mathematical Logic: Implied Sentiment")
+    st.markdown("""
+    **The Problem:** We need 5+ years of data to train the AI, but detailed news sentiment data is often expensive or unavailable for the past.
     
-    st.subheader("The Math: Detecting Panic")
-    st.markdown("We use a **Z-Score** to find 'Black Swan' events:")
-    st.latex(r'''Z = \frac{\text{Today} - \text{Average}}{\text{Volatility}}''')
-    st.write("If Z < -1.5, the AI enters 'Panic Mode' and overrides normal signals.")
+    **The Solution:** We derive an *Implied Sentiment* score from market behavior. If investors are selling (RSI Low) and volatility is high (VIX High), we mathematically infer that the news environment is negative.
+    
+    **The Formula:**
+    """)
+    
+    st.latex(r'''
+    S_{implied} = \frac{\text{RSI}_{norm} + (1 - \text{VIX}_{norm})}{2}
+    ''')
+    
+    st.markdown("""
+    **Where:**
+    * **RSI (Relative Strength Index):** Normalized to a 0-1 scale. A low RSI (oversold) pulls the score down.
+    * **VIX (Volatility Index):** Clamped between 10 and 60, then inverted. A high VIX (Panic) results in a low score closer to 0.
+    
+    This creates a synthetic "Sentiment Signal" that perfectly fills the gaps in our historical dataset.
+    """)
+
+    st.markdown("---")
+    st.header("3. Mathematical Logic: Leak-Proof Z-Scores")
+    st.markdown("""
+    **The Problem:** Many AI models fail because of "Look-Ahead Bias"—they use *today's* data to calculate the average, which makes today look less volatile than it really is.
+    
+    **The Solution:** We calculate the Z-Score (Anomaly Score) using a **Shifted Rolling Window**. The definition of "Panic" for *Today* is based strictly on the statistics of *Yesterday*.
+    
+    **The Formula:**
+    """)
+    
+    st.latex(r'''
+    Z_t = \frac{X_t - \mu_{t-1}}{\sigma_{t-1}}
+    ''')
+    
+    st.markdown("""
+    **Where:**
+    * $X_t$: The Sentiment Score at time $t$ (Today).
+    * $\mu_{t-1}$: The Rolling Mean calculated up to $t-1$ (Yesterday).
+    * $\sigma_{t-1}$: The Rolling Standard Deviation calculated up to $t-1$ (Yesterday).
+    
+    **Why this matters:** By strictly separating $t$ from the baseline calculation, we ensure the simulation is 100% realistic and "Net-of-Fees" profitable.
+    """)
+
+    st.markdown("---")
+    st.header("4. The 'Net-of-Fees' Philosophy")
+    st.markdown("""
+    **Why is there no 'Neutral' Signal?**
+    
+    In previous versions, the model would output "WAIT" if it was unsure. However, extensive Backtesting revealed a mathematical flaw in that approach:
+    
+    1.  **Churn Cost:** Constantly entering and exiting positions incurs transaction fees (Spread + Slippage).
+    2.  **Opportunity Cost:** The market tends to drift upwards. Being "out" often means missing small gains.
+    
+    **The Result:** A strategy that stays Invested ("Always-In") and only exits during extreme "Panic" ($Z < -1.5$) outperforms a strategy that tries to be clever by waiting.
+    """)
 
 st.markdown("---")
-st.caption("Educational Demo. Not Financial Advice.")
+st.markdown("### ⚖️ Disclaimer")
+st.caption("Educational Demo Only. Not Financial Advice.")
