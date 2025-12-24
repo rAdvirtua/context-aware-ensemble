@@ -260,7 +260,7 @@ st.set_page_config(page_title="AI Market Predictor", layout="centered")
 if 'last_run' not in st.session_state: st.session_state['last_run'] = 0
 if 'last_retrain' not in st.session_state: st.session_state['last_retrain'] = 0
 
-tab1, tab2 = st.tabs(["🚀 AI Prediction Dashboard", "📚 Beginner's Guide"])
+tab1, tab2 = st.tabs(["🚀 AI Prediction Dashboard", "📐 Mathematical Architecture"])
 
 with tab1:
     st.title("🤖 Live AI Market Trader")
@@ -394,37 +394,53 @@ with tab1:
                             st.text(f"• {h}")
 
 with tab2:
-    st.title("📚 The Data Flywheel & Hybrid Architecture")
+    st.title("📐 Mathematical Architecture")
     
     st.markdown("""
-    ### 1. The "Data Moat" Strategy
-    Most retail trading bots fail because they rely on generic data. This system is different. It is a **Data Flywheel**.
+    ### 1. Z-Score Normalization (Contextualizing Sentiment)
+    Raw sentiment scores ($S_t$) from the DistilRoBERTa model are volatile and lack historical context. A score of $0.5$ might be bullish in a bear market but neutral in a bull market. We solve this by normalizing the score against a rolling 1-year window to derive a **Z-Score** ($Z_t$).
+    """)
     
-    * **Data Harvesting:** Every time you click "Analyze Market Now", the system saves the live news headlines, the calculated sentiment (MCWSI), and the market reaction to a secure local file (`proprietary_dataset.csv`).
-    * **Zero-Dependency:** Over time, you build a massive, proprietary text-to-market dataset that no one else has. You stop relying on Bloomberg or Google News because you own the history.
+    st.latex(r'''
+    Z_t = \frac{S_t - \mu_{t-365}}{\sigma_{t-365}}
+    ''')
     
-    ### 2. The Hybrid "Time-Bridge" Engine
-    We face a common problem: *How do we train a news model if we can't afford 20 years of Bloomberg archives?*
+    st.markdown("""
+    Where:
+    * $S_t$ is the raw sentiment score at time $t$.
+    * $\mu_{t-365}$ is the rolling mean of sentiment over the last 365 days.
+    * $\sigma_{t-365}$ is the rolling standard deviation.
     
-    We use a **Hybrid Stitching** technique:
+    **Why this matters:** If $Z_t < -2.0$, we have a statistically significant "Black Swan" fear event (Anomaly Detection).
     
-    1.  **The Gold Standard (2018-2024):** We load your verified `mcwsi_historical_2024.csv`. This provides ground-truth sentiment data.
-    2.  **The Bridge (2024-Present):** For the gap between your static dataset and "today", the system switches to **"Implied Sentiment"**. It reverse-engineers what the news *must have been* based on VIX and RSI volatility.
-    3.  **The Live Edge (Today):** For the current second, it scrapes live data.
+    ### 2. The Implied Sentiment Proxy (Missing Data)
+    To train the model over long periods where news data is unavailable (the "Time Bridge"), we infer sentiment ($S_{implied}$) from market observables:
+    """)
     
-    This creates a seamless, unbreakable timeline of market context, allowing the Neural Network to see the "Big Picture" without gaps.
+    st.latex(r'''
+    S_{implied} \approx \frac{\text{RSI}_{norm} + (1 - \text{VIX}_{norm})}{2}
+    ''')
     
-    ### 3. The Neural Architecture
-    The decision engine is a **Mixture of Experts (MoE)** that dynamically weighs two strategies:
+    st.markdown("""
+    This assumes that high volatility ($VIX$) and low momentum ($RSI$) are proxies for negative news flow.
     
-    * **Expert A (The Chartist):** A Temporal Convolutional Network (TCN) that looks at price action and momentum.
-    * **Expert B (The Analyst):** A Transformer that looks at Sentiment Z-Scores.
-    * **The Gate:** A Gating Network watches the VIX. If Fear is high, it listens to the Analyst (Sentiment). If Fear is low, it listens to the Chartist (Price).
+    ### 3. Mixture of Experts (Gating Logic)
+    The final decision $Y$ is a weighted sum of two "Expert" Neural Networks. The weights are determined by a **Gating Network** $G(x)$ that watches the VIX.
+    """)
     
-    ### 4. How to Use
-    1.  **Check the Signal:** Green means risk-on, Red means cash-preservation.
-    2.  **Read the Reasoning:** The AI explains *why* (e.g., "Market is too fearful despite good news").
-    3.  **Retrain Weekly:** Use the sidebar to fine-tune the model on the data you have harvested.
+    st.latex(r'''
+    Y = w_{TCN} \cdot E_{TCN}(x) + w_{NLP} \cdot E_{NLP}(x)
+    ''')
+    
+    st.markdown("The gating weights $w$ are calculated via a Softmax function:")
+    
+    st.latex(r'''
+    w = \text{Softmax}(W_g \cdot \text{VIX} + b_g)
+    ''')
+    
+    st.markdown("""
+    * **Low VIX:** $w_{TCN} \to 1$ (Trust the Technicals).
+    * **High VIX:** $w_{NLP} \to 1$ (Trust the News/Sentiment).
     """)
 
 st.markdown("---")
