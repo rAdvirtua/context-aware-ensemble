@@ -243,10 +243,19 @@ def generate_reasoning(pred_return, vix, z_score, momentum):
             
     return reasoning
 
-st.set_page_config(page_title="Hybrid AI Trader", layout="centered")
+def get_market_mood_emoji(z_score):
+    if z_score > 1.5: return "🚀"
+    elif z_score > 0.5: return "😊"
+    elif z_score > -0.5: return "😐"
+    elif z_score > -1.5: return "😰"
+    else: return "😱"
+
+st.set_page_config(page_title="Hybrid AI Trader", layout="centered", initial_sidebar_state="expanded")
 
 if 'last_run' not in st.session_state: st.session_state['last_run'] = 0
 if 'last_retrain' not in st.session_state: st.session_state['last_retrain'] = 0
+if 'analysis_count' not in st.session_state: st.session_state['analysis_count'] = 0
+if 'show_quick_tips' not in st.session_state: st.session_state['show_quick_tips'] = True
 
 st.sidebar.title("🤖 Control Panel")
 st.sidebar.header("1. Input Settings")
@@ -254,6 +263,7 @@ sentiment_mode = st.sidebar.radio("Sentiment Source:", ["Auto-Scrape News", "Man
 manual_val = 0.0
 if sentiment_mode == "Manual Input Slider":
     manual_val = st.sidebar.slider("Market Vibe (-1=Panic, 1=Hype)", -1.0, 1.0, 0.0, 0.1)
+    st.sidebar.caption("💡 Tip: Use -1.0 to simulate a market crash, +1.0 for extreme optimism")
 else:
     st.sidebar.info("🕷️ Scraping Google News for 'SPY'")
 
@@ -261,16 +271,16 @@ st.sidebar.markdown("---")
 st.sidebar.header("2. Active Learning")
 st.sidebar.caption("Teach the AI with latest data (Weekly)")
 
-if st.sidebar.button("Retrain AI Brain"):
+if st.sidebar.button("Retrain AI Brain", use_container_width=True):
     curr_ts = time.time()
     time_since_retrain = curr_ts - st.session_state['last_retrain']
     if time_since_retrain < RETRAIN_COOLDOWN_SECONDS:
-        st.sidebar.error(f"Wait {int((RETRAIN_COOLDOWN_SECONDS - time_since_retrain)/60)} mins.")
+        st.sidebar.error(f"⏳ Cooldown: Wait {int((RETRAIN_COOLDOWN_SECONDS - time_since_retrain)/60)} mins.")
     else:
         st.session_state['last_retrain'] = curr_ts
         model, scaler, config = load_resources()
         if model is None:
-            st.sidebar.error("Model missing.")
+            st.sidebar.error("❌ Model missing.")
         else:
             with st.sidebar.status("🧠 Training...", expanded=True) as status:
                 try:
@@ -296,87 +306,308 @@ if st.sidebar.button("Retrain AI Brain"):
                         opt.step()
                     torch.save(model.state_dict(), MODEL_FILE)
                     status.update(label="✅ Brain Updated!", state="complete", expanded=False)
+                    st.sidebar.success("🎉 Model trained successfully!")
                 except Exception as e:
                     status.update(label="❌ Failed", state="error")
                     st.sidebar.error(str(e))
 
-tab1, tab2 = st.tabs(["🚀 Dashboard", "📚 Beginner's Guide"])
+st.sidebar.markdown("---")
+st.sidebar.header("📊 Quick Stats")
+if st.session_state['analysis_count'] > 0:
+    st.sidebar.metric("Analyses Run", st.session_state['analysis_count'])
+    if os.path.exists(PROPRIETARY_DB_FILE):
+        try:
+            hist_data = pd.read_csv(PROPRIETARY_DB_FILE)
+            st.sidebar.metric("Total Predictions Logged", len(hist_data))
+        except:
+            pass
+
+tab1, tab2, tab3 = st.tabs(["🚀 Dashboard", "📖 How to Use", "📚 Technical Guide"])
 
 with tab1:
     st.title("🤖 Live Market Analysis")
     st.markdown("Multi-Expert Ensemble: **TCN (Technicals)** + **Transformer (Sentiment)**")
 
-    if st.button("🚀 Analyze Market Now", use_container_width=True):
+    if st.session_state['show_quick_tips']:
+        with st.expander("💡 Quick Start Tips (Click to dismiss)", expanded=True):
+            st.markdown("""
+            1. **Choose your mode:** Auto-scrape news for real-time analysis, or use manual slider to test scenarios
+            2. **Click "Analyze Market Now"** to get AI prediction (60-second cooldown between runs)
+            3. **Read the reasoning:** The AI explains WHY it made its decision
+            4. **Check the data:** Scroll down to see VIX, Z-Score, and news headlines
+            """)
+            if st.button("Got it! Don't show again"):
+                st.session_state['show_quick_tips'] = False
+                st.rerun()
+
+    if st.button("🚀 Analyze Market Now", use_container_width=True, type="primary"):
         current_time = time.time()
         time_since_last = current_time - st.session_state['last_run']
         
         if time_since_last < COOLDOWN_SECONDS:
-            st.warning(f"Cooldown active: Wait {int(COOLDOWN_SECONDS - time_since_last)}s.")
+            st.warning(f"⏳ Cooldown active: Wait {int(COOLDOWN_SECONDS - time_since_last)}s to prevent API overload.")
         else:
             st.session_state['last_run'] = current_time
+            st.session_state['analysis_count'] += 1
             model, scaler, config = load_resources()
             
             if model is None:
                 st.error("⚠️ Model files missing! Please upload hybrid_model.pth.")
             else:
-                with st.spinner("🕷️ AI is reading the news & checking charts..."):
-                    df, headlines, final_sent_score = run_analysis(sentiment_mode, manual_val)
-                    
-                    input_slice = df.iloc[-SEQ_LEN:][['Returns', 'VIX', 'Mom_10', 'Sent_Z_Score', 'Panic_Signal']]
-                    input_scaled = scaler.transform(input_slice)
-                    input_tensor = torch.FloatTensor(input_scaled).unsqueeze(0).to(device)
-                    
-                    model.eval()
-                    with torch.no_grad(): pred_raw = model(input_tensor).item()
-                    
-                    mean, std = scaler.mean_[0], scaler.scale_[0]
-                    pred_real = (pred_raw * std) + mean
-                    
-                    curr_vix = df['VIX'].iloc[-1]
-                    curr_z = df['Sent_Z_Score'].iloc[-1]
-                    curr_mom = df['Mom_10'].iloc[-1]
-                    
-                    log_data_snapshot(final_sent_score, headlines, pred_real, curr_vix, curr_mom)
+                progress_bar = st.progress(0)
+                status_text = st.empty()
+                
+                status_text.text("📥 Fetching market data...")
+                progress_bar.progress(25)
+                
+                df, headlines, final_sent_score = run_analysis(sentiment_mode, manual_val)
+                
+                status_text.text("🧮 Processing indicators...")
+                progress_bar.progress(50)
+                
+                input_slice = df.iloc[-SEQ_LEN:][['Returns', 'VIX', 'Mom_10', 'Sent_Z_Score', 'Panic_Signal']]
+                input_scaled = scaler.transform(input_slice)
+                input_tensor = torch.FloatTensor(input_scaled).unsqueeze(0).to(device)
+                
+                status_text.text("🤖 Running AI prediction...")
+                progress_bar.progress(75)
+                
+                model.eval()
+                with torch.no_grad(): pred_raw = model(input_tensor).item()
+                
+                mean, std = scaler.mean_[0], scaler.scale_[0]
+                pred_real = (pred_raw * std) + mean
+                
+                curr_vix = df['VIX'].iloc[-1]
+                curr_z = df['Sent_Z_Score'].iloc[-1]
+                curr_mom = df['Mom_10'].iloc[-1]
+                
+                log_data_snapshot(final_sent_score, headlines, pred_real, curr_vix, curr_mom)
+                
+                progress_bar.progress(100)
+                status_text.text("✅ Analysis complete!")
+                time.sleep(0.5)
+                progress_bar.empty()
+                status_text.empty()
 
-                    st.markdown("---")
-                    col1, col2 = st.columns([1, 2])
+                st.markdown("---")
+                
+                mood_emoji = get_market_mood_emoji(curr_z)
+                st.markdown(f"### Market Mood: {mood_emoji}")
+                
+                col1, col2 = st.columns([1, 2])
+                
+                with col1:
+                    if pred_real > 0:
+                        st.success("# ✅ BUY / LONG")
+                        st.metric("Model Forecast", f"+{pred_real*100:.2f}%", delta=f"{pred_real*100:.2f}%")
+                    else:
+                        st.error("# 🛑 SELL / SHORT")
+                        st.metric("Model Forecast", f"{pred_real*100:.2f}%", delta=f"{pred_real*100:.2f}%")
                     
-                    with col1:
-                        if pred_real > 0:
-                            st.success("# ✅ BUY / LONG")
-                            st.metric("Model Forecast", f"+{pred_real*100:.2f}%")
-                        else:
-                            st.error("# 🛑 SELL / SHORT")
-                            st.metric("Model Forecast", f"{pred_real*100:.2f}%")
-                            
-                    with col2:
-                        st.markdown("### **AI Reasoning:**")
-                        reasoning = generate_reasoning(pred_real, curr_vix, curr_z, curr_mom)
-                        st.info(reasoning)
-
-                    st.markdown("---")
-                    st.subheader("📊 The Data Behind the Decision")
-                    
-                    m1, m2, m3 = st.columns(3)
-                    
-                    m1.metric("VIX (Fear Gauge)", f"{curr_vix:.2f}")
-                    with m1.expander("Why VIX?"):
-                        st.write("The Gating Network uses VIX to weigh Technicals vs. Sentiment. Below 20 is Calm; Above 30 is Panic.")
-
-                    m2.metric("Sentiment Z-Score", f"{curr_z:.2f}")
-                    with m2.expander("What is Z-Score?"):
-                        st.write("A statistical anomaly detector. We use *Yesterday's* data to calculate the mean, preventing look-ahead bias.")
+                    confidence_level = abs(pred_real) * 100
+                    st.progress(min(confidence_level / 5, 1.0))
+                    st.caption(f"Signal Strength: {'Strong' if confidence_level > 2 else 'Moderate' if confidence_level > 1 else 'Weak'}")
                         
-                    m3.metric("AI Confidence", f"{final_sent_score:.2f}")
-                    with m3.expander("Confidence?"):
-                        st.write("The raw output (-1 to 1) from the Transformer reading the headlines below.")
+                with col2:
+                    st.markdown("### **AI Reasoning:**")
+                    reasoning = generate_reasoning(pred_real, curr_vix, curr_z, curr_mom)
+                    st.info(reasoning)
 
-                    st.markdown("### 📰 Headlines Analyzed")
-                    with st.expander("Show News Source"):
-                        for h in headlines: st.text(f"• {h}")
+                st.markdown("---")
+                st.subheader("📊 The Data Behind the Decision")
+                
+                m1, m2, m3 = st.columns(3)
+                
+                vix_delta = "Normal" if curr_vix < 20 else "High" if curr_vix < 30 else "Extreme"
+                m1.metric("VIX (Fear Gauge)", f"{curr_vix:.2f}", delta=vix_delta, delta_color="inverse")
+                with m1.expander("ℹ️ Why VIX?"):
+                    st.write("The Gating Network uses VIX to weigh Technicals vs. Sentiment. Below 20 is Calm; Above 30 is Panic.")
+
+                z_sentiment = "Euphoric" if curr_z > 1 else "Fearful" if curr_z < -1 else "Neutral"
+                m2.metric("Sentiment Z-Score", f"{curr_z:.2f}", delta=z_sentiment)
+                with m2.expander("ℹ️ What is Z-Score?"):
+                    st.write("A statistical anomaly detector. We use *Yesterday's* data to calculate the mean, preventing look-ahead bias.")
+                    st.write(f"**Current Status:** {z_sentiment}")
+                    
+                conf_pct = abs(final_sent_score) * 100
+                m3.metric("News Sentiment", f"{final_sent_score:.2f}", delta=f"{conf_pct:.0f}%")
+                with m3.expander("ℹ️ Confidence Score"):
+                    st.write("The raw output (-1 to 1) from the Transformer reading the headlines below.")
+                    st.write("Closer to -1 = Bearish news, Closer to +1 = Bullish news")
+
+                st.markdown("---")
+                st.markdown("### 📰 Headlines Analyzed")
+                with st.expander("📄 Show News Sources", expanded=True):
+                    for idx, h in enumerate(headlines, 1):
+                        st.markdown(f"**{idx}.** {h}")
+
+                st.balloons()
 
 with tab2:
-    st.title("📚 Beginner's Guide & Mathematical Proofs")
+    st.title("📖 How to Use This App")
+    
+    st.header("🎯 What Does This App Do?")
+    st.markdown("""
+    This is an AI-powered market analysis tool that predicts whether you should **BUY/LONG** or **SELL/SHORT** 
+    the S&P 500 (SPY) based on:
+    - 📊 Technical indicators (price patterns, volatility)
+    - 📰 News sentiment (what the media is saying)
+    - 🧠 Deep learning models trained on historical data
+    """)
+    
+    st.markdown("---")
+    st.header("🚀 Step-by-Step Guide")
+    
+    with st.expander("**Step 1: Choose Your Input Mode**", expanded=True):
+        st.markdown("""
+        In the **left sidebar**, you'll see two options:
+        
+        **🕷️ Auto-Scrape News (Recommended for beginners)**
+        - The AI automatically fetches the latest news headlines about SPY from Google News
+        - It analyzes them in real-time to gauge market sentiment
+        - Best for getting actual market predictions
+        
+        **🎚️ Manual Input Slider (For testing)**
+        - You control the sentiment score manually
+        - Useful for "what-if" scenarios: "What if the market was in extreme panic?"
+        - Slide from -1 (Panic) to +1 (Euphoria)
+        """)
+        st.image("https://via.placeholder.com/600x200/3b82f6/ffffff?text=Sidebar+Controls", use_container_width=True)
+    
+    with st.expander("**Step 2: Run the Analysis**"):
+        st.markdown("""
+        1. Click the big **"🚀 Analyze Market Now"** button on the Dashboard tab
+        2. Wait 5-10 seconds while the AI:
+           - Downloads market data (VIX, S&P 500 prices)
+           - Scrapes news headlines
+           - Runs the prediction model
+        3. You'll see a progress bar showing what's happening
+        
+        **⏳ Cooldown Timer:** You can only run analysis once every 60 seconds to prevent overloading data sources.
+        """)
+    
+    with st.expander("**Step 3: Understand the Results**"):
+        st.markdown("""
+        The AI will show you:
+        
+        **🟢 BUY/LONG Signal**
+        - Green box with an upward forecast (e.g., +1.23%)
+        - The AI thinks the market will go UP
+        
+        **🔴 SELL/SHORT Signal**
+        - Red box with a downward forecast (e.g., -0.87%)
+        - The AI thinks the market will go DOWN
+        
+        **💬 AI Reasoning Box**
+        - Explains WHY the AI made this decision
+        - Examples: "Low volatility + bullish news" or "Extreme panic detected"
+        """)
+    
+    with st.expander("**Step 4: Check the Data**"):
+        st.markdown("""
+        Scroll down to see three key metrics:
+        
+        1. **VIX (Fear Gauge):** Below 20 = calm, above 30 = panic
+        2. **Sentiment Z-Score:** How unusual today's news is compared to history
+        3. **News Sentiment:** The raw sentiment score from analyzing headlines
+        
+        Click the "📄 Show News Sources" button to see which headlines the AI read.
+        """)
+    
+    st.markdown("---")
+    st.header("🎓 Advanced Features")
+    
+    with st.expander("**🔄 Retrain AI Brain**"):
+        st.markdown("""
+        **When to use:** Once per week to keep the AI updated with the latest market patterns.
+        
+        **What it does:**
+        - Pulls the last 60 days of data
+        - Fine-tunes the model weights
+        - Saves the updated model
+        
+        **⏳ Cooldown:** 1 hour between retraining sessions (to prevent overfitting)
+        """)
+    
+    with st.expander("**📊 Quick Stats Sidebar**"):
+        st.markdown("""
+        At the bottom of the sidebar, you'll see:
+        - How many analyses you've run this session
+        - Total predictions logged in the database
+        
+        This helps you track your usage.
+        """)
+    
+    st.markdown("---")
+    st.header("💡 Pro Tips")
+    
+    col_tip1, col_tip2 = st.columns(2)
+    
+    with col_tip1:
+        st.markdown("""
+        **🎯 Best Practices:**
+        - Run analysis during market hours (9:30 AM - 4 PM EST) for freshest news
+        - Check multiple times per day to see how sentiment shifts
+        - Use manual mode to test historical "what-if" scenarios
+        - Retrain weekly after major market events
+        """)
+    
+    with col_tip2:
+        st.markdown("""
+        **⚠️ Common Mistakes:**
+        - Don't spam the analyze button (respect cooldowns)
+        - Don't ignore the reasoning - it's as important as the signal
+        - Don't use this as sole trading advice (educational tool only)
+        - Don't retrain too often (causes overfitting)
+        """)
+    
+    st.markdown("---")
+    st.header("❓ FAQ")
+    
+    with st.expander("Why does it say 'Cooldown active'?"):
+        st.markdown("""
+        The app limits how often you can run analysis to:
+        1. Prevent overloading free data sources (Yahoo Finance, Google News)
+        2. Avoid IP bans from web scraping
+        3. Save computational resources
+        
+        **60-second cooldown** for analysis, **1-hour cooldown** for retraining.
+        """)
+    
+    with st.expander("What does 'Signal Strength' mean?"):
+        st.markdown("""
+        This shows how confident the AI is in its prediction:
+        - **Strong:** Prediction > 2% (high conviction)
+        - **Moderate:** Prediction 1-2% (medium conviction)
+        - **Weak:** Prediction < 1% (low conviction)
+        
+        Weak signals might indicate a choppy/sideways market.
+        """)
+    
+    with st.expander("Can I use this for real trading?"):
+        st.markdown("""
+        **This is an educational demo only.** While the AI uses sophisticated techniques:
+        - Past performance doesn't guarantee future results
+        - Markets are unpredictable and can change instantly
+        - Always consult a financial advisor before trading
+        - Use proper risk management and position sizing
+        
+        Think of this as a learning tool to understand how AI analyzes markets.
+        """)
+    
+    with st.expander("Why do I see different results each time?"):
+        st.markdown("""
+        Multiple factors cause variation:
+        1. **News changes:** Headlines update constantly throughout the day
+        2. **Market prices:** VIX and S&P 500 move in real-time
+        3. **Sentiment shifts:** Public mood can swing rapidly
+        
+        This is normal and reflects actual market dynamics.
+        """)
+
+with tab3:
+    st.title("📚 Technical Guide & Mathematical Proofs")
     
     st.header("1. The Core Architecture")
     st.markdown("""
@@ -450,7 +681,60 @@ with tab2:
     
     **The Result:** A strategy that stays Invested ("Always-In") and only exits during extreme "Panic" ($Z < -1.5$) outperforms a strategy that tries to be clever by waiting.
     """)
+    
+    st.markdown("---")
+    st.header("5. Model Architecture Deep Dive")
+    
+    with st.expander("🔬 Temporal Convolutional Network (TCN)"):
+        st.markdown("""
+        **Purpose:** Captures long-range dependencies in time-series data.
+        
+        **How it works:**
+        - Uses dilated convolutions to see far into the past
+        - Dilation factor doubles at each layer (1, 2, 4, 8...)
+        - This allows the model to "see" 30 days back without using 30 layers
+        
+        **Architecture:**
+        - Layer 1: 32 channels, dilation=1
+        - Layer 2: 64 channels, dilation=2
+        - Layer 3: 32 channels, dilation=4
+        - Output: Single prediction value
+        """)
+    
+    with st.expander("🔬 Sentiment Transformer"):
+        st.markdown("""
+        **Purpose:** Analyzes sequential sentiment scores using attention mechanisms.
+        
+        **How it works:**
+        - Projects sentiment into 32-dimensional embedding space
+        - Applies multi-head attention (4 heads)
+        - Learns which past sentiment patterns matter most
+        
+        **Pre-training:**
+        - Uses DistilRoBERTa fine-tuned on financial news
+        - Can distinguish bullish vs bearish language
+        - Trained on thousands of labeled financial headlines
+        """)
+    
+    with st.expander("🔬 Gating Network"):
+        st.markdown("""
+        **Purpose:** Decides how much to trust each expert.
+        
+        **How it works:**
+        - Takes current market conditions as input
+        - Outputs two weights that sum to 1.0
+        - In high VIX: weights sentiment more heavily
+        - In low VIX: weights technicals more heavily
+        
+        **Formula:**
+        """)
+        st.latex(r'''
+        \text{Output} = w_1 \cdot \text{TCN}(x) + w_2 \cdot \text{Transformer}(x)
+        ''')
+        st.latex(r'''
+        w_1 + w_2 = 1.0
+        ''')
 
 st.markdown("---")
 st.markdown("### ⚖️ Disclaimer")
-st.caption("Educational Demo Only. Not Financial Advice.")
+st.caption("Educational Demo Only. Not Financial Advice. Always consult a licensed financial advisor before making investment decisions.")
