@@ -402,7 +402,7 @@ with tab2:
     ### 1. The Foundation: Verified History (2018-2024)
     To predict the stock market, you need a memory of how news affects prices.
     * **The Problem:** We couldn't just "guess" what sentiment was 5 years ago.
-    * **The Solution:** We used the **Michigan Consumer Sentiment Index (MCWSI)** as our "Ground Truth." This is a gold-standard academic dataset that measures economic confidence. We uploaded this as `mcwsi_historical_2024.csv` to give the AI a verified memory of the past.
+    * **The Solution:** We used the **Michigan Consumer Sentiment Index (MCWSI)** as our "Ground Truth." This is a gold-standard academic dataset that measures economic confidence.
     
     ### 2. The Bridge: Filling the Gap (Late 2024-Present)
     Official data like MCWSI is released with a lag (sometimes weeks late). We needed a way to fill the gap between "Then" and "Now."
