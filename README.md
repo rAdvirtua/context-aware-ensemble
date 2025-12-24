@@ -26,7 +26,48 @@ The result is a streamlined dashboard for retail investors that outputs clear **
 * **Implied Sentiment Engine:** Solves the "Paywall Problem" by reverse-engineering historical sentiment from VIX and RSI data for periods where news archives are unavailable.
 * **Active Learning (Retraining):** Includes a "Retrain AI" module that allows the model to fine-tune itself on the most recent 60 days of market data directly from the dashboard.
 
+## Mathematical Foundation
+
+The system relies on three core mathematical innovations to handle data gaps and regime changes.
+
+### 1. Z-Score Normalization (The "MCWSI Proxy")
+Raw sentiment scores from the NLP model are volatile and lack historical context. A score of `0.5` might be bullish in a bear market but neutral in a bull market. We normalize the live score against a rolling 365-day window to derive a **Z-Score** ($Z_t$):
+
+$$
+Z_t = \frac{S_t - \mu_{t-365}}{\sigma_{t-365}}
+$$
+
+* Where $S_t$ is the raw sentiment score, $\mu$ is the rolling mean, and $\sigma$ is the rolling standard deviation.
+* **Anomaly Detection:** If $Z_t < -2.0$, the system flags a statistically significant "Black Swan" panic event.
+
+### 2. Implied Sentiment (The "Time Machine")
+To train the model over long periods where news data is unavailable (e.g., data gaps between historical CSVs and live data), we infer sentiment ($S_{implied}$) from market observables:
+
+$$
+S_{implied} \approx \frac{\text{RSI}_{norm} + (1 - \text{VIX}_{norm})}{2}
+$$
+
+This assumes that high volatility ($VIX$) and low momentum ($RSI$) are valid mathematical proxies for negative news flow during data blackouts.
+
+### 3. Mixture of Experts (Gating Logic)
+The final decision $Y$ is a weighted sum of two "Expert" Neural Networks. The weights are determined by a **Gating Network** that watches the VIX:
+
+$$
+Y = w_{TCN} \cdot E_{TCN}(x) + w_{NLP} \cdot E_{NLP}(x)
+$$
+
+The gating weights $w$ are calculated via a Softmax function:
+
+$$
+w = \text{Softmax}(W_g \cdot \text{VIX} + b_g)
+$$
+
+* **Low VIX:** $w_{TCN} \to 1$ (The model trusts Price Trends).
+* **High VIX:** $w_{NLP} \to 1$ (The model trusts News/Sentiment).
+
 ## Architecture
+
+
 
 The model follows a **Mixture of Experts (MoE)** design:
 
@@ -34,8 +75,6 @@ The model follows a **Mixture of Experts (MoE)** design:
 2.  **Expert A (Technicals):** A TCN with dilated causal convolutions extracts trend patterns from price data.
 3.  **Expert B (Sentiment):** A Transformer Encoder processes the narrative structure of market fear and news sentiment.
 4.  **Gating Network:** A Feed-Forward Network monitors the **VIX** (Volatility Index) and assigns weights to the experts in real-time.
-    * *Low VIX* -> The model prioritizes Momentum/Technicals.
-    * *High VIX* -> The model prioritizes Sentiment and Panic Signals.
 
 ## Installation & Usage
 
@@ -66,8 +105,8 @@ The model follows a **Mixture of Experts (MoE)** design:
 * `hybrid_model.pth`: Pre-trained PyTorch model weights.
 * `scaler.pkl`: Scikit-learn scaler for data normalization.
 * `model_config.json`: Hyperparameter configuration file.
-* `mcwsi_historical_2024.csv`: The base historical dataset (2018-2024).
-* `proprietary_dataset.csv`: **[AUTO-GENERATED]** The app creates this file to store your unique dataset.
+* `mcwsi_historical_2024.csv`: **[REQUIRED]** The base historical dataset (2018-2024) containing verified sentiment data.
+* `proprietary_dataset.csv`: **[AUTO-GENERATED]** The app creates this file to store your unique dataset (Live News + Market Reactions).
 
 ## Disclaimer
 
