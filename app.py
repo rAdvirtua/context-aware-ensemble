@@ -260,7 +260,7 @@ st.set_page_config(page_title="AI Market Predictor", layout="centered")
 if 'last_run' not in st.session_state: st.session_state['last_run'] = 0
 if 'last_retrain' not in st.session_state: st.session_state['last_retrain'] = 0
 
-tab1, tab2 = st.tabs(["🚀 AI Prediction Dashboard", "📚 Beginner's Guide"])
+tab1, tab2 = st.tabs(["🚀 AI Prediction Dashboard", "📚 Beginner's Guide (How It Works)"])
 
 with tab1:
     st.title("🤖 Live AI Market Trader")
@@ -394,56 +394,52 @@ with tab1:
                             st.text(f"• {h}")
 
 with tab2:
-    st.title("📚 Beginner's Guide (The Secret Math)")
+    st.title("📚 How The 'Hybrid-Engine' Works")
     
     st.markdown("""
-    Welcome! If you are new to AI trading, this page explains **exactly** how the magic works. We use some serious math, but we'll explain it simply.
+    This system solves the biggest problem in AI trading: **"How do you connect the past to the present?"**
     
-    ### 1. The "Vibe Check" (Normalization)
-    **The Problem:** The AI reads the news and gives a score (e.g., +0.5). But is +0.5 "good"?
-    * In a Bull Market, +0.5 is boring.
-    * In a Crash, +0.5 is amazing!
+    ### 1. The Foundation: Verified History (2018-2024)
+    To predict the stock market, you need a memory of how news affects prices.
+    * **The Problem:** We couldn't just "guess" what sentiment was 5 years ago.
+    * **The Solution:** We used the **Michigan Consumer Sentiment Index (MCWSI)** as our "Ground Truth." This is a gold-standard academic dataset that measures economic confidence. We uploaded this as `mcwsi_historical_2024.csv` to give the AI a verified memory of the past.
     
-    **The Solution:** We use a formula called **Z-Score** to compare today's vibe against the average of the last year. It tells us: *"Is today WEIRDLY happy or WEIRDLY sad?"*
+    ### 2. The Bridge: Filling the Gap (Late 2024-Present)
+    Official data like MCWSI is released with a lag (sometimes weeks late). We needed a way to fill the gap between "Then" and "Now."
+    * **The Problem:** We had a "Black Hole" of data for the last few months.
+    * **The Solution:** We built an **Implied Sentiment Engine**. We reverse-engineered the missing data by looking at market behavior. If the market was crashing (High VIX) and selling off (Low RSI), we *mathematically implied* that the news must have been bad.
+    
     """)
-    
-    st.latex(r'''
-    Z_t = \frac{S_t - \mu_{t-365}}{\sigma_{t-365}}
-    ''')
-    
-    st.markdown("""
-    * **Simple translation:** (Today's Score - Average Score) divided by (Standard Deviation). 
-    * If this number is super low (like -2.0), it means **PANIC!** (Black Swan Event).
-    
-    ### 2. The "Time Machine" (Implied Sentiment)
-    **The Problem:** We want to train the AI on history, but we can't afford 10 years of Bloomberg news archives.
-    
-    **The Solution:** We cheat! We look at how the market *acted* in the past (Volatility) to guess what the news *probably* was. If the market was crashing, we assume the news was bad.
-    """)
-    
     st.latex(r'''
     S_{implied} \approx \frac{\text{RSI}_{norm} + (1 - \text{VIX}_{norm})}{2}
     ''')
-    
     st.markdown("""
-    * **Simple translation:** We mix Momentum (RSI) and Fear (VIX) to create a "Ghost Sentiment" score. This fills in the gaps so the AI has a continuous memory.
+    This allowed us to stitch together a perfect, unbroken timeline from 2018 to today.
     
-    ### 3. The "Two Brains" (Mixture of Experts)
-    **The Problem:** Sometimes charts work (Trends). Sometimes they fail (Panic).
+    ### 3. The "Relevance" Problem (Why Generic Sentiment Fails)
+    Most beginner bots fail because they just check if a headline is "Happy" or "Sad."
+    * **The Flaw:** If a small company like "Petco" has bad news, it shouldn't crash the S&P 500. But a generic bot would see "Bad News" and sell everything.
+    * **Our Fix:** We don't scrape random news. We specifically scrape the **S&P 500 ETF Trust (SPY)**.
+    * **Why this works:** The news cycle naturally filters for "Market Movers." When we scrape "SPY", we only get headlines about the giants (Apple, Nvidia, The Fed) that actually move the index. This automatically handles the "Weighting" problem without complex math.
     
-    **The Solution:** We built a **Gating Network**. It's like a traffic cop that decides which expert to listen to.
-    * **Brain A (The Chartist):** Looks at lines on a graph.
-    * **Brain B (The News Reader):** Reads headlines.
+    ### 4. The Live Calculation (MCWSI Proxy Formula)
+    Finally, we need to turn today's raw news into a score that matches our historical MCWSI data. We use a **Z-Score Transformation**.
+    
+    We take the raw score from our AI (DistilRoBERTa) and compare it to the last year of data to see if today is an anomaly.
     """)
     
     st.latex(r'''
-    \text{Decision} = (w_{tech} \cdot \text{Chartist}) + (w_{news} \cdot \text{NewsReader})
+    \text{MCWSI}_{proxy} = \frac{\text{Today's Score} - \text{365-Day Average}}{\text{365-Day Volatility}}
     ''')
     
     st.markdown("""
-    The "Traffic Cop" ($w$) uses the **Softmax** function to decide who is in charge:
-    * **If VIX is Low (Calm):** The cop lets the **Chartist** drive.
-    * **If VIX is High (Panic):** The cop shuts down the Chartist and lets the **News Reader** take the wheel.
+    * If the result is **> 0**, the market is more confident than usual.
+    * If the result is **< -2**, we are in a historic panic (Black Swan).
+    
+    ### 5. The "Fear Gate" (VIX)
+    Even if the news is good, a panicked market won't go up. Our model uses a **Gating Network** to watch the VIX (Fear Gauge).
+    * **Low Fear:** The AI trusts the Price Trends (Technical Analysis).
+    * **High Fear:** The AI ignores the charts and focuses 100% on the News (Fundamental Analysis) to protect your money.
     """)
 
 st.markdown("---")
