@@ -67,8 +67,6 @@ $$
 
 ## Architecture
 
-
-
 The model follows a **Mixture of Experts (MoE)** design:
 
 1.  **Input:** A 30-day lookback window containing Returns, VIX, Momentum, and Sentiment Z-Scores.
@@ -105,8 +103,17 @@ The model follows a **Mixture of Experts (MoE)** design:
 * `hybrid_model.pth`: Pre-trained PyTorch model weights.
 * `scaler.pkl`: Scikit-learn scaler for data normalization.
 * `model_config.json`: Hyperparameter configuration file.
-* `mcwsi_historical_2024.csv`: The base historical dataset (2018-2024) containing verified sentiment data.
+* `mcwsi_historical_2024.csv`: **[REQUIRED]** The base historical dataset (2008-2024) sourced from Dyuti Dasmahaptra's S&P 500 Financial News dataset.
 * `proprietary_dataset.csv`: **[AUTO-GENERATED]** The app creates this file to store your unique dataset (Live News + Market Reactions).
+
+## Data Sources & Credits
+
+This project utilizes verified historical data to establish its sentiment baseline.
+
+* **S&P 500 with Financial News Headlines (2008–2024):**
+    * **Author:** Dyuti Dasmahaptra
+    * **Source:** [Kaggle Dataset](https://www.kaggle.com/datasets/dyutidasmahaptra/s-and-p-500-with-financial-news-headlines-20082024)
+    * **Usage:** This dataset provides the foundational "Ground Truth" for our sentiment analysis model (referenced as `mcwsi_historical_2024.csv`), allowing the system to understand market context prior to the live data stream.
 
 ## Disclaimer
 
