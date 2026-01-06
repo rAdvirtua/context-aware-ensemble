@@ -177,15 +177,46 @@ def get_hybrid_sentiment(df):
 
 def run_analysis(sentiment_mode, manual_score=0.0):
     tickers = ['^GSPC', '^VIX', 'DX-Y.NYB', '^TNX']
-    data = yf.download(tickers, period="2y", progress=False)
+    
+    data = yf.download(tickers, period="2y", progress=False, auto_adjust=False)
+    
+    df_dict = {}
     
     if isinstance(data.columns, pd.MultiIndex):
-        if 'Adj Close' in data.columns.get_level_values(0): df = data['Adj Close'].copy()
-        elif 'Close' in data.columns.get_level_values(0): df = data['Close'].copy()
-        else: df = data.xs('Close', level=1, axis=1) if 'Close' in data.columns.levels[1] else data
-    else: df = data['Adj Close'].copy() if 'Adj Close' in data.columns else data['Close'].copy()
+        for ticker in tickers:
+            try:
+                ticker_data = data.xs(ticker, axis=1, level=1)
+            except KeyError:
+                try:
+                    ticker_data = data.xs(ticker, axis=1, level=0)
+                except KeyError:
+                    st.error(f"⚠️ Data Download Failed for {ticker}. Check symbol or API status.")
+                    continue
+            
+            if 'Adj Close' in ticker_data.columns:
+                df_dict[ticker] = ticker_data['Adj Close']
+            elif 'Close' in ticker_data.columns:
+                df_dict[ticker] = ticker_data['Close']
+            else:
+                st.warning(f"No Close data found for {ticker}")
+    else:
+        df = data['Adj Close'] if 'Adj Close' in data.columns else data['Close']
+        if isinstance(df, pd.Series):
+            return pd.DataFrame(), [], 0.0
+        df_dict = {col: df[col] for col in df.columns if col in tickers}
+
+    df = pd.DataFrame(df_dict)
     
     df = df.rename(columns={'^GSPC': 'SP500', '^VIX': 'VIX', 'DX-Y.NYB': 'DXY', '^TNX': 'TNX'})
+    
+    if 'VIX' not in df.columns or df['VIX'].isna().all():
+        st.error("❌ CRITICAL ERROR: VIX data missing from Yahoo Finance. Cannot proceed without VIX.")
+        st.stop()
+
+    if 'SP500' not in df.columns or df['SP500'].isna().all():
+        st.error("❌ CRITICAL ERROR: S&P 500 data missing from Yahoo Finance.")
+        st.stop()
+
     df['Returns'] = np.log(df['SP500'] / df['SP500'].shift(1))
     df['Vol_MA'] = df['VIX'].rolling(window=10).mean()
     df['Mom_10'] = df['SP500'].pct_change(10)
@@ -198,7 +229,9 @@ def run_analysis(sentiment_mode, manual_score=0.0):
         headlines = ["User Manual Input override active."]
         
     df['Sentiment_Score'] = get_hybrid_sentiment(df)
-    df.iloc[-1, df.columns.get_loc('Sentiment_Score')] = live_sentiment
+    
+    if not df.empty:
+        df.iloc[-1, df.columns.get_loc('Sentiment_Score')] = live_sentiment
     
     df['Signal_Smooth'] = df['Sentiment_Score'].ewm(span=14, adjust=False).mean()
     df['Rolling_Mean'] = df['Signal_Smooth'].shift(1).rolling(window=365, min_periods=30).mean()
@@ -285,6 +318,8 @@ if st.sidebar.button("Retrain AI Brain", use_container_width=True):
             with st.sidebar.status("🧠 Training...", expanded=True) as status:
                 try:
                     df, _, _ = run_analysis("Auto-Scrape News")
+                    if df.empty:
+                        raise Exception("No data available for training")
                     batch = df.iloc[-60:][['Returns', 'VIX', 'Mom_10', 'Sent_Z_Score', 'Panic_Signal']]
                     scaled = scaler.transform(batch)
                     
@@ -362,87 +397,92 @@ with tab1:
                 
                 df, headlines, final_sent_score = run_analysis(sentiment_mode, manual_val)
                 
-                status_text.text("🧮 Processing indicators...")
-                progress_bar.progress(50)
-                
-                input_slice = df.iloc[-SEQ_LEN:][['Returns', 'VIX', 'Mom_10', 'Sent_Z_Score', 'Panic_Signal']]
-                input_scaled = scaler.transform(input_slice)
-                input_tensor = torch.FloatTensor(input_scaled).unsqueeze(0).to(device)
-                
-                status_text.text("🤖 Running AI prediction...")
-                progress_bar.progress(75)
-                
-                model.eval()
-                with torch.no_grad(): pred_raw = model(input_tensor).item()
-                
-                mean, std = scaler.mean_[0], scaler.scale_[0]
-                pred_real = (pred_raw * std) + mean
-                
-                curr_vix = df['VIX'].iloc[-1]
-                curr_z = df['Sent_Z_Score'].iloc[-1]
-                curr_mom = df['Mom_10'].iloc[-1]
-                
-                log_data_snapshot(final_sent_score, headlines, pred_real, curr_vix, curr_mom)
-                
-                progress_bar.progress(100)
-                status_text.text("✅ Analysis complete!")
-                time.sleep(0.5)
-                progress_bar.empty()
-                status_text.empty()
-
-                st.markdown("---")
-                
-                mood_emoji = get_market_mood_emoji(curr_z)
-                st.markdown(f"### Market Mood: {mood_emoji}")
-                
-                col1, col2 = st.columns([1, 2])
-                
-                with col1:
-                    if pred_real > 0:
-                        st.success("# ✅ BUY / LONG")
-                        st.metric("Model Forecast", f"+{pred_real*100:.2f}%", delta=f"{pred_real*100:.2f}%")
-                    else:
-                        st.error("# 🛑 SELL / SHORT")
-                        st.metric("Model Forecast", f"{pred_real*100:.2f}%", delta=f"{pred_real*100:.2f}%")
+                if df.empty:
+                    st.error("Failed to retrieve market data. Please try again later.")
+                    progress_bar.empty()
+                    status_text.empty()
+                else:
+                    status_text.text("🧮 Processing indicators...")
+                    progress_bar.progress(50)
                     
-                    confidence_level = abs(pred_real) * 100
-                    st.progress(min(confidence_level / 5, 1.0))
-                    st.caption(f"Signal Strength: {'Strong' if confidence_level > 2 else 'Moderate' if confidence_level > 1 else 'Weak'}")
+                    input_slice = df.iloc[-SEQ_LEN:][['Returns', 'VIX', 'Mom_10', 'Sent_Z_Score', 'Panic_Signal']]
+                    input_scaled = scaler.transform(input_slice)
+                    input_tensor = torch.FloatTensor(input_scaled).unsqueeze(0).to(device)
+                    
+                    status_text.text("🤖 Running AI prediction...")
+                    progress_bar.progress(75)
+                    
+                    model.eval()
+                    with torch.no_grad(): pred_raw = model(input_tensor).item()
+                    
+                    mean, std = scaler.mean_[0], scaler.scale_[0]
+                    pred_real = (pred_raw * std) + mean
+                    
+                    curr_vix = df['VIX'].iloc[-1]
+                    curr_z = df['Sent_Z_Score'].iloc[-1]
+                    curr_mom = df['Mom_10'].iloc[-1]
+                    
+                    log_data_snapshot(final_sent_score, headlines, pred_real, curr_vix, curr_mom)
+                    
+                    progress_bar.progress(100)
+                    status_text.text("✅ Analysis complete!")
+                    time.sleep(0.5)
+                    progress_bar.empty()
+                    status_text.empty()
+
+                    st.markdown("---")
+                    
+                    mood_emoji = get_market_mood_emoji(curr_z)
+                    st.markdown(f"### Market Mood: {mood_emoji}")
+                    
+                    col1, col2 = st.columns([1, 2])
+                    
+                    with col1:
+                        if pred_real > 0:
+                            st.success("# ✅ BUY / LONG")
+                            st.metric("Model Forecast", f"+{pred_real*100:.2f}%", delta=f"{pred_real*100:.2f}%")
+                        else:
+                            st.error("# 🛑 SELL / SHORT")
+                            st.metric("Model Forecast", f"{pred_real*100:.2f}%", delta=f"{pred_real*100:.2f}%")
                         
-                with col2:
-                    st.markdown("### **AI Reasoning:**")
-                    reasoning = generate_reasoning(pred_real, curr_vix, curr_z, curr_mom)
-                    st.info(reasoning)
+                        confidence_level = abs(pred_real) * 100
+                        st.progress(min(confidence_level / 5, 1.0))
+                        st.caption(f"Signal Strength: {'Strong' if confidence_level > 2 else 'Moderate' if confidence_level > 1 else 'Weak'}")
+                            
+                    with col2:
+                        st.markdown("### **AI Reasoning:**")
+                        reasoning = generate_reasoning(pred_real, curr_vix, curr_z, curr_mom)
+                        st.info(reasoning)
 
-                st.markdown("---")
-                st.subheader("📊 The Data Behind the Decision")
-                
-                m1, m2, m3 = st.columns(3)
-                
-                vix_delta = "Normal" if curr_vix < 20 else "High" if curr_vix < 30 else "Extreme"
-                m1.metric("VIX (Fear Gauge)", f"{curr_vix:.2f}", delta=vix_delta, delta_color="inverse")
-                with m1.expander("ℹ️ Why VIX?"):
-                    st.write("The Gating Network uses VIX to weigh Technicals vs. Sentiment. Below 20 is Calm; Above 30 is Panic.")
-
-                z_sentiment = "Euphoric" if curr_z > 1 else "Fearful" if curr_z < -1 else "Neutral"
-                m2.metric("Sentiment Z-Score", f"{curr_z:.2f}", delta=z_sentiment)
-                with m2.expander("ℹ️ What is Z-Score?"):
-                    st.write("A statistical anomaly detector. We use *Yesterday's* data to calculate the mean, preventing look-ahead bias.")
-                    st.write(f"**Current Status:** {z_sentiment}")
+                    st.markdown("---")
+                    st.subheader("📊 The Data Behind the Decision")
                     
-                conf_pct = abs(final_sent_score) * 100
-                m3.metric("News Sentiment", f"{final_sent_score:.2f}", delta=f"{conf_pct:.0f}%")
-                with m3.expander("ℹ️ Confidence Score"):
-                    st.write("The raw output (-1 to 1) from the Transformer reading the headlines below.")
-                    st.write("Closer to -1 = Bearish news, Closer to +1 = Bullish news")
+                    m1, m2, m3 = st.columns(3)
+                    
+                    vix_delta = "Normal" if curr_vix < 20 else "High" if curr_vix < 30 else "Extreme"
+                    m1.metric("VIX (Fear Gauge)", f"{curr_vix:.2f}", delta=vix_delta, delta_color="inverse")
+                    with m1.expander("ℹ️ Why VIX?"):
+                        st.write("The Gating Network uses VIX to weigh Technicals vs. Sentiment. Below 20 is Calm; Above 30 is Panic.")
 
-                st.markdown("---")
-                st.markdown("### 📰 Headlines Analyzed")
-                with st.expander("📄 Show News Sources", expanded=True):
-                    for idx, h in enumerate(headlines, 1):
-                        st.markdown(f"**{idx}.** {h}")
+                    z_sentiment = "Euphoric" if curr_z > 1 else "Fearful" if curr_z < -1 else "Neutral"
+                    m2.metric("Sentiment Z-Score", f"{curr_z:.2f}", delta=z_sentiment)
+                    with m2.expander("ℹ️ What is Z-Score?"):
+                        st.write("A statistical anomaly detector. We use *Yesterday's* data to calculate the mean, preventing look-ahead bias.")
+                        st.write(f"**Current Status:** {z_sentiment}")
+                        
+                    conf_pct = abs(final_sent_score) * 100
+                    m3.metric("News Sentiment", f"{final_sent_score:.2f}", delta=f"{conf_pct:.0f}%")
+                    with m3.expander("ℹ️ Confidence Score"):
+                        st.write("The raw output (-1 to 1) from the Transformer reading the headlines below.")
+                        st.write("Closer to -1 = Bearish news, Closer to +1 = Bullish news")
 
-                st.balloons()
+                    st.markdown("---")
+                    st.markdown("### 📰 Headlines Analyzed")
+                    with st.expander("📄 Show News Sources", expanded=True):
+                        for idx, h in enumerate(headlines, 1):
+                            st.markdown(f"**{idx}.** {h}")
+
+                    st.balloons()
 
 with tab2:
     st.title("📖 How to Use This App")
@@ -473,7 +513,6 @@ with tab2:
         - Useful for "what-if" scenarios: "What if the market was in extreme panic?"
         - Slide from -1 (Panic) to +1 (Euphoria)
         """)
-        st.image("https://via.placeholder.com/600x200/3b82f6/ffffff?text=Sidebar+Controls", use_container_width=True)
     
     with st.expander("**Step 2: Run the Analysis**"):
         st.markdown("""
