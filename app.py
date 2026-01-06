@@ -283,6 +283,24 @@ def get_market_mood_emoji(z_score):
     elif z_score > -1.5: return "😰"
     else: return "😱"
 
+def check_model_health():
+    if not os.path.exists(MODEL_FILE):
+        return "missing", "Model file not found", "red"
+    
+    try:
+        model_age_days = (time.time() - os.path.getmtime(MODEL_FILE)) / 86400
+        
+        if model_age_days > 30:
+            return "critical", f"Model is {int(model_age_days)} days old - Urgent retraining needed", "red"
+        elif model_age_days > 14:
+            return "warning", f"Model is {int(model_age_days)} days old - Retraining recommended", "orange"
+        elif model_age_days > 7:
+            return "caution", f"Model is {int(model_age_days)} days old - Consider retraining soon", "yellow"
+        else:
+            return "healthy", f"Model is {int(model_age_days)} days old - Good condition", "green"
+    except Exception as e:
+        return "error", f"Cannot check model: {str(e)}", "gray"
+
 st.set_page_config(page_title="Hybrid AI Trader", layout="centered", initial_sidebar_state="expanded")
 
 if 'last_run' not in st.session_state: st.session_state['last_run'] = 0
@@ -303,6 +321,21 @@ else:
 st.sidebar.markdown("---")
 st.sidebar.header("2. Active Learning")
 st.sidebar.caption("Teach the AI with latest data (Weekly)")
+
+health_status, health_msg, health_color = check_model_health()
+
+if health_status == "missing":
+    st.sidebar.error("⚠️ " + health_msg)
+elif health_status == "critical":
+    st.sidebar.error("🔴 " + health_msg)
+elif health_status == "warning":
+    st.sidebar.warning("🟠 " + health_msg)
+elif health_status == "caution":
+    st.sidebar.info("🟡 " + health_msg)
+elif health_status == "healthy":
+    st.sidebar.success("🟢 " + health_msg)
+else:
+    st.sidebar.info("ℹ️ " + health_msg)
 
 if st.sidebar.button("Retrain AI Brain", use_container_width=True):
     curr_ts = time.time()
@@ -356,6 +389,18 @@ if st.session_state['analysis_count'] > 0:
             st.sidebar.metric("Total Predictions Logged", len(hist_data))
         except:
             pass
+
+if os.path.exists(MODEL_FILE):
+    model_age_days = (time.time() - os.path.getmtime(MODEL_FILE)) / 86400
+    last_trained = datetime.fromtimestamp(os.path.getmtime(MODEL_FILE)).strftime("%Y-%m-%d")
+    st.sidebar.metric("Model Last Trained", last_trained)
+    
+    if model_age_days <= 7:
+        st.sidebar.caption("✅ Model is fresh")
+    elif model_age_days <= 14:
+        st.sidebar.caption("⚠️ Consider retraining")
+    else:
+        st.sidebar.caption("🔴 Retraining recommended")
 
 tab1, tab2, tab3 = st.tabs(["🚀 Dashboard", "📖 How to Use", "📚 Technical Guide"])
 
