@@ -237,8 +237,8 @@ def run_analysis(sentiment_mode, manual_score=0.0):
     df['Rolling_Mean'] = df['Signal_Smooth'].shift(1).rolling(window=365, min_periods=30).mean()
     df['Rolling_Std'] = df['Signal_Smooth'].shift(1).rolling(window=365, min_periods=30).std()
     
-    df['Rolling_Mean'] = df['Rolling_Mean'].fillna(method='bfill')
-    df['Rolling_Std'] = df['Rolling_Std'].fillna(method='bfill')
+    df['Rolling_Mean'] = df['Rolling_Mean'].bfill()
+    df['Rolling_Std'] = df['Rolling_Std'].bfill()
     
     df['Sent_Z_Score'] = (df['Signal_Smooth'] - df['Rolling_Mean']) / df['Rolling_Std']
     df['Sent_Z_Score'] = df['Sent_Z_Score'].fillna(0)
