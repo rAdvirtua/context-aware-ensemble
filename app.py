@@ -691,7 +691,7 @@ with tab2:
         """)
 
 with tab3:
-    st.title("📚 Technical Guide & Mathematical Proofs")
+    st.title("📚 Technical Guide & Mathematical Formulae")
     
     st.header("1. The Core Architecture")
     st.markdown("""
